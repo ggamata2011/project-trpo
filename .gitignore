@@ -6,6 +6,9 @@
 /.pnp
 .pnp.js
 
+# Stripe -> Google Platform keys
+stripe-connector/stripe-bamrec-767863fb1b1a.json
+
 # testing
 /coverage
 
