@@ -20,6 +20,31 @@ const oauthClient = new OAuthClient({
 const bodyParser = require('body-parser');
 app.use(bodyParser.json());
 
+//Big query API requires
+const {BigQuery} = require('@google-cloud/bigquery');
+
+const BQ = new BigQuery({
+  keyFilename: 'TAAPI.json',
+  projectId: 'ta-test-442511', // Replace with your project ID
+})
+
+//Schemas
+const InvoiceSchema = [
+  { name: 'TxnDate', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'TotalAmt', type: 'FLOAT', mode: 'NULLABLE' },
+  { name: 'DocNumber', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'CustomerName', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'CustomerValue', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'Lines', type: 'STRING', mode: 'REPEATED' },
+  { name: 'DueDate', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'Email', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'ShipAddr', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'BillAddr', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'CreateTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
+  { name: 'LastUpdatedTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
+];
+
+
 //Instantiate Token to null 
 let OAUTH2_Token = null;
 
@@ -47,8 +72,12 @@ app.get('/TA-Intuit-Callback', function (req, res) {
     console.log('The Token is  ' + JSON.stringify(authResponse.json));
     OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
 
+    //Create Tables
+    createTable("Invoice","Invoice_Detail");
+    
+
     //Get Invoice (Temporarily commented out)
-    //GetInvoiceData();
+    GetInvoiceData();
 
     // Schedule the token refresh to happen every 60 minutes (3600 seconds)
     // Old CODE 60 * 60 * 1000
@@ -57,6 +86,7 @@ app.get('/TA-Intuit-Callback', function (req, res) {
 
     //Set Interval for Getting Invoice Data
     setInterval(GetInvoiceData,60 * 60 * 1000);
+
 
   })
   .catch(function (e) {
@@ -96,6 +126,8 @@ app.get('/invoice', function(req,res ){
     .makeApiCall({ url: `${url}v3/company/${companyID}/query?query=select * from Invoice&minorversion=73`})
     .then(function (response) {
     console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
+
+  
     
     })
     .catch(function (e) {
@@ -137,10 +169,11 @@ function RefreshAccessToken()
 }
 
 //Code below will contain Functions for starting API calls
-function GetInvoiceData()
+async function GetInvoiceData()
 {
    //Instantiate Invoice data
    let Invoicedata = null;
+   let TransformedData = null;
 
     if(CheckAccessToken())
     {
@@ -154,7 +187,13 @@ function GetInvoiceData()
       oauthClient
       .makeApiCall({ url: `${url}v3/company/${companyID}/query?query=select * from Invoice&minorversion=73`})
       .then(function (response) {
-      console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
+      //console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
+
+       console.log("\n\nOriginal Data:" + response.json + "\n\n");
+
+        TransformedData = ConvertJSON(response.json);
+
+        PushData("Invoice","Invoice_Detail",TransformedData);
       })
       .catch(function (e) {
       console.error(e);
@@ -162,10 +201,10 @@ function GetInvoiceData()
 
       //If we have invoice data, parse data into fields
       //or Ingest Data onto BQ API
-      if(Invoicedata)
-      {
-
-      }
+      //if(Invoicedata)
+      //{
+        
+      //}
 }
 else
 {
@@ -185,3 +224,104 @@ app.listen(PORT, function () {
 
 //Functions to Organize Data into their Column Row Formats
 //Code Below is saved for Google Big Query API
+
+//Push Data onto Google Big Query
+async function PushData(DataID,TabID,RowData)
+{
+  
+  try{
+    
+    const options = {
+      autodetect: true,
+      writeDisposition: 'WRITE_APPEND', // Appends data to the table
+    };
+
+     // Load data directly from memory
+     const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData);
+
+     console.log(`Data loaded into BigQuery. Job: ${job.id}`);
+
+  } catch  (error)
+  {
+    console.error('Error inserting');
+    console.error('Error message:', error.message); // Log the error message
+    console.error('Error details:', error); // Log the full error object for debugging
+  }
+    
+}
+
+//Convert to JSON new line delimited
+function ConvertJSON(Data)
+{
+  //Wrap JSON data in array to use .map
+  //Data = [Data];
+
+  //return map
+  //console.log(Data.map(item => JSON.stringify(item)))
+  //return Data.map(item => JSON.stringify(item)).join('\n');
+  // Assume `apiResponse.QueryResponse.Invoice` contains an array of invoices
+  const invoices = Data.QueryResponse.Invoice || [];
+
+  return invoices.map(invoice => {
+    return {
+      TxnDate: invoice.TxnDate || null,
+      TotalAmt: invoice.TotalAmt || null,
+      DocNumber: invoice.DocNumber || null,
+      CustomerName: invoice.CustomerRef?.name || null,
+      CustomerValue: invoice.CustomerRef?.value || null,
+      Lines: invoice.Line ? JSON.stringify(invoice.Line) : null,
+      DueDate: invoice.DueDate || null,
+      Email: invoice.BillEmail?.Address || null,
+      ShipAddr: invoice.ShipAddr ? JSON.stringify(invoice.ShipAddr) : null,
+      BillAddr: invoice.BillAddr ? JSON.stringify(invoice.BillAddr) : null,
+      CreateTime: invoice.MetaData?.CreateTime || null,
+      LastUpdatedTime: invoice.MetaData?.LastUpdatedTime || null,
+    };
+  });
+  
+}
+
+//Creates Table function (General)
+async function createTable(DataID, TabID, schemaprofile) {
+  const datasetId = DataID;
+  const tableId = TabID;
+
+  try {
+    // Check if the dataset exists
+    const [datasets] = await BQ.getDatasets();
+    const datasetExists = datasets.some(dataset => dataset.id === datasetId);
+
+    if (!datasetExists) {
+      // Create a new dataset if it doesn't exist
+      await BQ.createDataset(datasetId, { location: 'US' });
+      console.log(`Dataset ${datasetId} created.`);
+    } else {
+      console.log(`Dataset ${datasetId} already exists.`);
+    }
+
+    // Reference the dataset
+    const dataset = BQ.dataset(datasetId);
+
+    // Check if the table exists
+    const [tables] = await dataset.getTables();
+    const tableExists = tables.some(table => table.id === tableId);
+
+    if (!tableExists) {
+      // Create the table if it doesn't exist
+      const options = {
+        schema: schemaprofile,
+        location: 'US',
+      };
+      const [table] = await dataset.createTable(tableId, options);
+      console.log(`Table ${table.id} created.`);
+    } else {
+      console.log(`Table ${tableId} already exists.`);
+    }
+  } catch (err) {
+    console.error('Error creating or checking table:', err);
+  }
+}
+
+
+
+
