@@ -24,8 +24,8 @@ app.use(bodyParser.json());
 const {BigQuery} = require('@google-cloud/bigquery');
 
 const BQ = new BigQuery({
-  keyFilename: 'TAAPI.json',
-  projectId: 'ta-test-442511', // Replace with your project ID
+  keyFilename: 'tableu-442921-272d860b3fc9.json',
+  projectId: 'tableu-442921', // Replace with your project ID
 })
 
 //Schemas
@@ -35,7 +35,7 @@ const InvoiceSchema = [
   { name: 'DocNumber', type: 'STRING', mode: 'NULLABLE' },
   { name: 'CustomerName', type: 'STRING', mode: 'NULLABLE' },
   { name: 'CustomerValue', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'Lines', type: 'STRING', mode: 'REPEATED' },
+  { name: 'Lines', type: 'STRING', mode: 'NULLABLE' },
   { name: 'DueDate', type: 'STRING', mode: 'NULLABLE' },
   { name: 'Email', type: 'STRING', mode: 'NULLABLE' },
   { name: 'ShipAddr', type: 'STRING', mode: 'NULLABLE' },
@@ -66,32 +66,8 @@ app.get('/TA-Intuit-Callback', function (req, res) {
   //res.send('Hello World! this is a test for the callback function');
   //Callback logic for storing shit goes into here
  
-  oauthClient
-  .createToken(req.url)
-  .then(function (authResponse) {
-    console.log('The Token is  ' + JSON.stringify(authResponse.json));
-    OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
+   InitateAccessTokenGET(req);
 
-    //Create Tables
-    createTable("Invoice","Invoice_Detail");
-    
-
-    //Get Invoice (Temporarily commented out)
-    GetInvoiceData();
-
-    // Schedule the token refresh to happen every 60 minutes (3600 seconds)
-    // Old CODE 60 * 60 * 1000
-    setInterval(RefreshAccessToken, 55 * 60 * 1000);
-    console.log('Refresh Access Token Timer Started')
-
-    //Set Interval for Getting Invoice Data
-    setInterval(GetInvoiceData,60 * 60 * 1000);
-
-
-  })
-  .catch(function (e) {
-    console.error(e);
-  });
 
 });
 
@@ -126,9 +102,6 @@ app.get('/invoice', function(req,res ){
     .makeApiCall({ url: `${url}v3/company/${companyID}/query?query=select * from Invoice&minorversion=73`})
     .then(function (response) {
     console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
-
-  
-    
     })
     .catch(function (e) {
     console.error(e);
@@ -136,6 +109,35 @@ app.get('/invoice', function(req,res ){
   }
 
 })
+
+async function InitateAccessTokenGET(req)
+{
+  await oauthClient
+  .createToken(req.url)
+  .then(function (authResponse) {
+    console.log('The Token is  ' + JSON.stringify(authResponse.json));
+    OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
+  })
+  .catch(function (e) {
+    console.error(e);
+  });
+
+   //Create Tables
+   await createTable("Invoice","Invoice_Detail",InvoiceSchema);
+    
+   //Get Invoice (Temporarily commented out)
+   await GetInvoiceData();
+
+   // Schedule the token refresh to happen every 60 minutes (3600 seconds)
+   // Old CODE 60 * 60 * 1000
+   setInterval(RefreshAccessToken, 55 * 60 * 1000);
+   console.log('Refresh Access Token Timer Started')
+
+   //Set Interval for Getting Invoice Data
+   setInterval(GetInvoiceData,60 * 60 * 1000);
+
+
+}
 
 //Check if Token is still valid, may call Refresh Token if needed
 function CheckAccessToken()
@@ -184,27 +186,18 @@ async function GetInvoiceData()
           ? OAuthClient.environment.sandbox
           : OAuthClient.environment.production;
 
-      oauthClient
+      await oauthClient
       .makeApiCall({ url: `${url}v3/company/${companyID}/query?query=select * from Invoice&minorversion=73`})
       .then(function (response) {
       //console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
-
-       console.log("\n\nOriginal Data:" + response.json + "\n\n");
-
-        TransformedData = ConvertJSON(response.json);
-
-        PushData("Invoice","Invoice_Detail",TransformedData);
+        Invoicedata = response.json;
       })
       .catch(function (e) {
       console.error(e);
       });
-
-      //If we have invoice data, parse data into fields
-      //or Ingest Data onto BQ API
-      //if(Invoicedata)
-      //{
-        
-      //}
+        TransformedData = await ConvertJSON(Invoicedata);
+        PushData("Invoice","Invoice_Detail",TransformedData);
+      
 }
 else
 {
@@ -228,16 +221,14 @@ app.listen(PORT, function () {
 //Push Data onto Google Big Query
 async function PushData(DataID,TabID,RowData)
 {
-  
   try{
-    
     const options = {
       autodetect: true,
       writeDisposition: 'WRITE_APPEND', // Appends data to the table
     };
 
      // Load data directly from memory
-     const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData);
+     const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData,options);
 
      console.log(`Data loaded into BigQuery. Job: ${job.id}`);
 
@@ -246,19 +237,21 @@ async function PushData(DataID,TabID,RowData)
     console.error('Error inserting');
     console.error('Error message:', error.message); // Log the error message
     console.error('Error details:', error); // Log the full error object for debugging
+
+
+    if (error.errors) {
+      error.errors.forEach(err => {
+        console.error('Row-level error:', JSON.stringify(err));
+      });
+    }
+
   }
     
 }
 
-//Convert to JSON new line delimited
-function ConvertJSON(Data)
+//Convert to JSON new line delimited (used for streaming data inserts)
+ async function ConvertJSON(Data)
 {
-  //Wrap JSON data in array to use .map
-  //Data = [Data];
-
-  //return map
-  //console.log(Data.map(item => JSON.stringify(item)))
-  //return Data.map(item => JSON.stringify(item)).join('\n');
   // Assume `apiResponse.QueryResponse.Invoice` contains an array of invoices
   const invoices = Data.QueryResponse.Invoice || [];
 
@@ -285,6 +278,8 @@ function ConvertJSON(Data)
 async function createTable(DataID, TabID, schemaprofile) {
   const datasetId = DataID;
   const tableId = TabID;
+
+  //console.log("Schema Profile:" + schemaprofile);
 
   try {
     // Check if the dataset exists
