@@ -20,6 +20,9 @@ const oauthClient = new OAuthClient({
 const bodyParser = require('body-parser');
 app.use(bodyParser.json());
 
+//Parse JSON bodies
+app.use(express.json());
+
 //Big query API requires
 const {BigQuery} = require('@google-cloud/bigquery');
 
@@ -47,6 +50,21 @@ const InvoiceSchema = [
 
 //Instantiate Token to null 
 let OAUTH2_Token = null;
+
+
+//Webhook API Endpoint
+app.post('/TA-Intuit',(req,res) => {
+
+ console.log('Received Request:' + req.body);
+
+ //Some Logic to pull Invoice data or possibly a switch for other types of data
+ GetInvoiceData();
+
+ // Send a response
+ res.status(200).send('Webhook received successfully');
+
+});
+
 
 //Initiate OAuthFlow, Sets scopes, sets authURI and redirects
 app.get('/Initiate-OAuth',function (req,res ){
@@ -85,6 +103,7 @@ app.get('/refreshAccessToken', function (req, res) {
     });
 });
 
+//API Endpoint for testing getting invoice data
 app.get('/invoice', function(req,res ){
   //Instantiate Invoice data
   let Invoicedata = null;
@@ -109,6 +128,7 @@ app.get('/invoice', function(req,res ){
   }
 
 })
+
 
 async function InitateAccessTokenGET(req)
 {
@@ -235,10 +255,6 @@ async function PushData(DataID,TabID,RowData)
   } catch  (error)
   {
     console.error('Error inserting');
-    console.error('Error message:', error.message); // Log the error message
-    console.error('Error details:', error); // Log the full error object for debugging
-
-
     if (error.errors) {
       error.errors.forEach(err => {
         console.error('Row-level error:', JSON.stringify(err));
