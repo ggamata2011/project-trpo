@@ -2,6 +2,9 @@
 //Requires for using Environment variables
 require('dotenv').config();
 
+
+
+
 //Instantiate App with express
 var express = require('express');
 var app = express();
@@ -69,6 +72,12 @@ app.post('/TA-Intuit',(req,res) => {
 });
 
 app.get('/Start',(req,res) => {
+
+  const authURI = oauthClient.authorizeUri({
+    scope:[OAuthClient.scopes.Accounting],
+    state:'ta-intuit-test'
+  });
+
     // Refresh the access token
     console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
@@ -205,10 +214,6 @@ async function RefreshAccessToken(opt)
     
   }
   
-
-
-
-
 //API Endpoint for testing getting invoice data
 app.get('/invoice', function(req,res ){
   GetInvoiceData();
@@ -222,7 +227,9 @@ async function GetInvoiceData()
 
     if(await CheckAccessToken())
     {
-      const companyID = oauthClient.getToken().realmId;
+      //const companyID = oauthClient.getToken().realmId;
+
+      const companyID = process.env.REALM_ID;
 
       const url =
         oauthClient.environment == 'sandbox'
