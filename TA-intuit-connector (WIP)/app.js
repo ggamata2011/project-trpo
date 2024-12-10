@@ -16,6 +16,9 @@ const oauthClient = new OAuthClient({
   redirectUri: process.env.CLIENT_REDIRECT,
 });
 
+//some old code to omit   environment: 'sandbox' || 'production',
+
+
 //Body-parser used for parsing and organizing request data 
 const bodyParser = require('body-parser');
 app.use(bodyParser.json());
@@ -62,13 +65,21 @@ app.post('/TA-Intuit',(req,res) => {
 
  // Send a response
  res.status(200).send('Webhook received successfully');
+   
+});
+
+app.get('/Start',(req,res) => {
+    // Refresh the access token
+    console.log("The refresh token is " + process.env.REFRESH_TOKEN );
+
+    GetInvoiceData();
+    res.send("Test Page Send for Refresh Token Accessed");
 
 });
 
 
 //Initiate OAuthFlow, Sets scopes, sets authURI and redirects
 app.get('/Initiate-OAuth',function (req,res ){
-
      //Instantiate AuthURI
   const authURI = oauthClient.authorizeUri({
     scope:[OAuthClient.scopes.Accounting],
@@ -84,54 +95,13 @@ app.get('/TA-Intuit-Callback', function (req, res) {
   //res.send('Hello World! this is a test for the callback function');
   //Callback logic for storing shit goes into here
  
+  console.log("Callback begun");
    InitateAccessTokenGET(req);
-
-
 });
-
-//API endpoint for Refreshing access token (mainly for testing)
-app.get('/refreshAccessToken', function (req, res) {
-  oauthClient
-    .refresh()
-    .then(function (authResponse) {
-      console.log(`\n The Refresh Token is  ${JSON.stringify(authResponse.json)}`);
-      OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
-      res.send(OAUTH2_Token);
-    })
-    .catch(function (e) {
-      console.error(e);
-    });
-});
-
-//API Endpoint for testing getting invoice data
-app.get('/invoice', function(req,res ){
-  //Instantiate Invoice data
-  let Invoicedata = null;
-
-  if(CheckAccessToken())
-  {
-    const companyID = oauthClient.getToken().realmId;
-
-    const url =
-      oauthClient.environment == 'sandbox'
-        ? OAuthClient.environment.sandbox
-        : OAuthClient.environment.production;
-
-    oauthClient
-    .makeApiCall({ url: `${url}v3/company/${companyID}/query?query=select * from Invoice&minorversion=73`})
-    .then(function (response) {
-    console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
-    })
-    .catch(function (e) {
-    console.error(e);
-    });
-  }
-
-})
-
 
 async function InitateAccessTokenGET(req)
 {
+  console.log('initate access token get');
   await oauthClient
   .createToken(req.url)
   .then(function (authResponse) {
@@ -159,37 +129,90 @@ async function InitateAccessTokenGET(req)
 
 }
 
+//API endpoint for Refreshing access token (mainly for testing)
+app.get('/refreshAccessToken', function (req, res) {
+  oauthClient
+    .refresh()
+    .then(function (authResponse) {
+      console.log(`\n The Refresh Token is  ${JSON.stringify(authResponse.json)}`);
+      OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
+      res.send(OAUTH2_Token);
+    })
+    .catch(function (e) {
+      console.error(e);
+    });
+});
+
+
 //Check if Token is still valid, may call Refresh Token if needed
-function CheckAccessToken()
+async function CheckAccessToken()
 {
-   if(oauthClient.isAccessTokenValid())
+   if( oauthClient.isAccessTokenValid())
    {
-    console.log('access token is good');
+    console.log('access token is good, can fetch data');
    }
    else
    {
-    RefreshAccessToken();
-    console.log('access token is no good');
+    console.log('access token invalid, refreshing token..');
+    await RefreshAccessToken(2);
    }
 
    return oauthClient.isAccessTokenValid();
 
 }
 
-//Refreshes access token
-function RefreshAccessToken()
+//Refreshes access token with current set OAUTH Token or supplied env
+async function RefreshAccessToken(opt)
 {
-  oauthClient
+  
+  switch(opt){
+
+    //Case 1 used for refresh, if OAuth used
+    case 1:
+      await oauthClient
     .refresh()
     .then(function (authResponse) {
-      console.log(`\n The Refresh Token is  ${JSON.stringify(authResponse.json)}`);
+      console.log(`\n The Refreshed Access Token is  ${JSON.stringify(authResponse.json)}`);
       OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
     })
     .catch(function (e) {
       console.error(e);
     });
+    break;
+
+    //Case 2 used for refresh if refresh token is already provided in environment variable
+    case 2:
+      await oauthClient
+  .refreshUsingToken(process.env.REFRESH_TOKEN)
+  .then(function (authResponse) {
+    console.log('Tokens refreshed : ' + JSON.stringify(authResponse.json));
+
+
+
+  })
+  .catch(function (e) {
+      console.error('Request failed with status code:', e.response?.status);
+      console.error('Response body:', e.response?.data);
+      console.error('Headers:', e.response?.headers);
+      console.error('Original error message:', e.message);
+      console.error('Intuit Transaction ID:', e.intuit_tid || 'N/A');
+  });
+
+    break; 
 }
 
+   
+    
+  }
+  
+
+
+
+
+//API Endpoint for testing getting invoice data
+app.get('/invoice', function(req,res ){
+  GetInvoiceData();
+})
 //Code below will contain Functions for starting API calls
 async function GetInvoiceData()
 {
@@ -197,7 +220,7 @@ async function GetInvoiceData()
    let Invoicedata = null;
    let TransformedData = null;
 
-    if(CheckAccessToken())
+    if(await CheckAccessToken())
     {
       const companyID = oauthClient.getToken().realmId;
 
@@ -269,7 +292,9 @@ async function PushData(DataID,TabID,RowData)
  async function ConvertJSON(Data)
 {
   // Assume `apiResponse.QueryResponse.Invoice` contains an array of invoices
-  const invoices = Data.QueryResponse.Invoice || [];
+  if(Data)
+  {
+    const invoices = Data.QueryResponse.Invoice || [];
 
   return invoices.map(invoice => {
     return {
@@ -287,6 +312,12 @@ async function PushData(DataID,TabID,RowData)
       LastUpdatedTime: invoice.MetaData?.LastUpdatedTime || null,
     };
   });
+
+  }
+  else{
+    console.log("No data in response");
+  }
+  
   
 }
 
