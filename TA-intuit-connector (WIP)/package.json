@@ -5,7 +5,7 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node --env-file=.env app.js"
+    "start": "node app.js"
   },
   "keywords": [
     "TA"
@@ -13,6 +13,8 @@
   "author": "Guiller Gamata",
   "license": "ISC",
   "dependencies": {
+    "@google-cloud/bigquery": "^7.9.1",
+    "@google-cloud/bigquery-connection": "^3.3.0",
     "body-parser": "^1.20.3",
     "dotenv": "^16.4.5",
     "ejs": "^3.1.10",
