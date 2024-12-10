@@ -6,7 +6,9 @@ const { BigQuery } = require('@google-cloud/bigquery');
 
 // Initialize BigQuery client
 const bigquery = new BigQuery({
-    keyFilename: 'stripe-bamrec-767863fb1b1a.json', // Path to your service account key file
+    //keyFilename: 'tableu-442921-2589eb103d9b.json', // Path to your service account key file
+    //keyFilename: 'stripe-bamrec-767863fb1b1a.json'
+    keyFilename: 'tableu-442921-272d860b3fc9.json',
 });
 
 // Initialize the app with Express
@@ -19,6 +21,11 @@ app.use(bodyParser.json());
 
 // Connecting to the Stripe API using the secret key
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+//console.log(process.env.STRIPE_SECRET_KEY);
+
+if (!process.env.STRIPE_SECRET_KEY) {
+    throw new error('STRIPE_SECRET_KEY is not defined');
+}
 
 // Function to ensure dataset and table exist in BigQuery
 async function ensureDatasetAndTable(datasetId, tableId) {
@@ -68,8 +75,27 @@ async function insertIntoBigQuery(datasetId, tableId, rows) {
     }
 }
 
+
+
 // Endpoint to fetch and insert Stripe transactions into BigQuery
 app.get('/transactions', async (req, res) => {
+    WrapperFunction(res);
+});
+/*
+//list out transactions on console
+(async () => {
+    try {
+        const charges = await stripe.charges.list({limit:3})
+        console.log('Here are the recent BamRec Transactions!');
+        console.log(charges);
+    } catch (error) {
+        console.error("Error fetching charges: ", error);
+    }
+})(); 
+*/
+
+async function WrapperFunction(res)
+{
     try {
         const charges = await stripe.charges.list({ limit: 10 });
 
@@ -86,7 +112,7 @@ app.get('/transactions', async (req, res) => {
         }));
 
         // Define dataset and table names
-        const datasetId = 'BamRec_Payments';
+        const datasetId = 'Stripe';
         const tableId = 'Transactions';
 
         // Ensure dataset and table exist
@@ -99,18 +125,35 @@ app.get('/transactions', async (req, res) => {
         console.error('Error loading transactions:', error);
         res.status(500).send('Failed to load transaction data.');
     }
+
+}
+
+//Webhook API endpoint
+app.post('/stripe-wh', (req,res) => {
+    console.log('Received Request: ' + req.body);
+    console.log(`Data Received ${JSON.stringify(res.json)}`);
+    
+    WrapperFunction(res);
+
+    console.log("Table Connected");
+
+    res.status(200).send("Webhook Connected");
+
 });
 
-//list out transactions on console
-(async () => {
-    try {
-        const charges = await stripe.charges.list({limit:3})
-        console.log('Here are the recent BamRec Transactions!');
-        console.log(charges);
-    } catch (error) {
-        console.error("Error fetching charges: ", error);
-    }
-})();
+
+//asynchronous with await
+async function endpointfunction(endres)
+{
+
+
+  await ensureDatasetAndTable();
+  
+  await insertIntoBigQuery();
+  
+  res.status(200).send("Webhook Connected");
+
+}
 
 // Starting server
 app.listen(3001, function () {
