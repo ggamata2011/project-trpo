@@ -122,7 +122,8 @@ async function InitateAccessTokenGET(req)
    await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
     
    //Get Invoice (Temporarily commented out)
-   await GetInvoiceData();
+   let InvoiceData = await GetInvoiceData();
+   await PushInvoiceData(InvoiceData);
 
    // Schedule the token refresh to happen every 60 minutes (3600 seconds)
    // Old CODE 60 * 60 * 1000
@@ -246,12 +247,13 @@ else
 
 }
 
-function PushInvoiceData(InvoiceData)
+async function PushInvoiceData(InvoiceData)
 {
   if(InvoiceData)
   {
     let TransformedData = TransformJSON(InvoiceData);
-    PushDataBQ("Invoice","Invoice_Detail",TransformedData);
+    await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
+    await PushDataBQ("Invoice","Invoice_Detail",TransformedData);
   }
   else
   {
