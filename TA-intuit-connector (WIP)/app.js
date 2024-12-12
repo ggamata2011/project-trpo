@@ -9,8 +9,7 @@ require('dotenv').config();
 var express = require('express');
 var app = express();
 
-//Instantiate OAuth client
-// Will be moved onto environment variables in future instances
+//Instantiate Intuit Client
 const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
@@ -62,32 +61,32 @@ let OAUTH2_Token = null;
 app.post('/TA-Intuit',(req,res) => {
 
  console.log('Received Request:' + req.body);
-
  //Some Logic to pull Invoice data or possibly a switch for other types of data
  GetInvoiceData();
-
  // Send a response
  res.status(200).send('Webhook received successfully');
    
 });
 
-app.get('/Start',(req,res) => {
+app.get('/Start',async(req, res) => {
+   //Check Token and IDs
+   console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
+   console.log("RealmID is: " + process.env.REALM_ID);
+   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
+   console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
-  const authURI = oauthClient.authorizeUri({
-    scope:[OAuthClient.scopes.Accounting],
-    state:'ta-intuit-test'
-  });
+   let Data = await GetInvoiceData();
+   res.send("Test Page Send for Refresh Token Accessed, displaying data\n\n" + JSON.stringify(Data));
 
-    // Refresh the access token
-    console.log("The refresh token is " + process.env.REFRESH_TOKEN );
-
-    GetInvoiceData();
-    res.send("Test Page Send for Refresh Token Accessed");
-
+   //push Data to big query
+   PushInvoiceData(Data);
 });
+   
 
-
-//Initiate OAuthFlow, Sets scopes, sets authURI and redirects
+/* 
+******************************************************************
+*/
+//Below 3 functions are for OAuth Purposes for obtaining Tokens, may not be used anymore in favor of refresh tokens
 app.get('/Initiate-OAuth',function (req,res ){
      //Instantiate AuthURI
   const authURI = oauthClient.authorizeUri({
@@ -98,7 +97,6 @@ app.get('/Initiate-OAuth',function (req,res ){
   //Begin Redirect
   res.redirect(authURI);
 });
-
 //Callback Page after OAuth-Redirec 
 app.get('/TA-Intuit-Callback', function (req, res) {
   //res.send('Hello World! this is a test for the callback function');
@@ -107,7 +105,6 @@ app.get('/TA-Intuit-Callback', function (req, res) {
   console.log("Callback begun");
    InitateAccessTokenGET(req);
 });
-
 async function InitateAccessTokenGET(req)
 {
   console.log('initate access token get');
@@ -122,10 +119,11 @@ async function InitateAccessTokenGET(req)
   });
 
    //Create Tables
-   await createTable("Invoice","Invoice_Detail",InvoiceSchema);
+   await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
     
    //Get Invoice (Temporarily commented out)
-   await GetInvoiceData();
+   let InvoiceData = await GetInvoiceData();
+   await PushInvoiceData(InvoiceData);
 
    // Schedule the token refresh to happen every 60 minutes (3600 seconds)
    // Old CODE 60 * 60 * 1000
@@ -137,21 +135,11 @@ async function InitateAccessTokenGET(req)
 
 
 }
+//3 functions for OAUTH end here 
 
-//API endpoint for Refreshing access token (mainly for testing)
-app.get('/refreshAccessToken', function (req, res) {
-  oauthClient
-    .refresh()
-    .then(function (authResponse) {
-      console.log(`\n The Refresh Token is  ${JSON.stringify(authResponse.json)}`);
-      OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
-      res.send(OAUTH2_Token);
-    })
-    .catch(function (e) {
-      console.error(e);
-    });
-});
-
+/* 
+******************************************************************
+*/
 
 //Check if Token is still valid, may call Refresh Token if needed
 async function CheckAccessToken()
@@ -214,22 +202,25 @@ async function RefreshAccessToken(opt)
     
   }
   
-//API Endpoint for testing getting invoice data
-app.get('/invoice', function(req,res ){
-  GetInvoiceData();
-})
 //Code below will contain Functions for starting API calls
 async function GetInvoiceData()
 {
    //Instantiate Invoice data
    let Invoicedata = null;
-   let TransformedData = null;
 
     if(await CheckAccessToken())
     {
-      //const companyID = oauthClient.getToken().realmId;
-
-      const companyID = process.env.REALM_ID;
+      let companyID = '';
+      
+      if(process.env.REALM_ID != '')
+      {
+         companyID = process.env.REALM_ID;
+      }
+      else
+      {
+         companyID = oauthClient.getToken().realmId;
+      }
+      
 
       const url =
         oauthClient.environment == 'sandbox'
@@ -245,58 +236,34 @@ async function GetInvoiceData()
       .catch(function (e) {
       console.error(e);
       });
-        TransformedData = await ConvertJSON(Invoicedata);
-        PushData("Invoice","Invoice_Detail",TransformedData);
-      
+
+      return Invoicedata;        
 }
 else
 {
-  console.log("Bad Access Token!");
+  console.log("Bad Access Token!, unable to access data");
+  return null
 }
 
 }
 
-let PORT = 3000;
-//Listen for request on logs to vs
-app.listen(PORT, function () {
-  console.log(`Example app listening on port ${PORT}!`);
-  console.log(`http://localhost:${PORT}`)
-  console.log(`To Start O-Auth Process click on link below`)
-  console.log(`http://localhost:${PORT}/Initiate-OAuth`)
-});
-
-//Functions to Organize Data into their Column Row Formats
-//Code Below is saved for Google Big Query API
-
-//Push Data onto Google Big Query
-async function PushData(DataID,TabID,RowData)
+async function PushInvoiceData(InvoiceData)
 {
-  try{
-    const options = {
-      autodetect: true,
-      writeDisposition: 'WRITE_APPEND', // Appends data to the table
-    };
-
-     // Load data directly from memory
-     const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData,options);
-
-     console.log(`Data loaded into BigQuery. Job: ${job.id}`);
-
-  } catch  (error)
+  if(InvoiceData)
   {
-    console.error('Error inserting');
-    if (error.errors) {
-      error.errors.forEach(err => {
-        console.error('Row-level error:', JSON.stringify(err));
-      });
-    }
-
+    let TransformedData = TransformJSON(InvoiceData);
+    await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
+    await PushDataBQ("Invoice","Invoice_Detail",TransformedData);
   }
-    
+  else
+  {
+    console.log("Data not recieved, Data will not be pushed");
+  }
+  
 }
 
-//Convert to JSON new line delimited (used for streaming data inserts)
- async function ConvertJSON(Data)
+//Convert to JSON new line delimited for Google BQ(used for streaming data inserts)
+async function TransformJSON(Data)
 {
   // Assume `apiResponse.QueryResponse.Invoice` contains an array of invoices
   if(Data)
@@ -325,11 +292,39 @@ async function PushData(DataID,TabID,RowData)
     console.log("No data in response");
   }
   
-  
 }
 
-//Creates Table function (General)
-async function createTable(DataID, TabID, schemaprofile) {
+//Google Big Query Functions Below
+
+//Push Data onto Google Big Query
+async function PushDataBQ(DataID,TabID,RowData)
+{
+  try{
+    const options = {
+      autodetect: true,
+      writeDisposition: 'WRITE_APPEND', // Appends data to the table
+    };
+
+     // Load data directly from memory
+     const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData,options);
+
+     console.log(`Data loaded into BigQuery. Job: ${job.id}`);
+
+  } catch  (error)
+  {
+    console.error('Error inserting');
+    if (error.errors) {
+      error.errors.forEach(err => {
+        console.error('Row-level error:', JSON.stringify(err));
+      });
+    }
+
+  }
+    
+}
+
+//Creates BQ Table function (General)
+async function createTableBQ(DataID, TabID, schemaprofile) {
   const datasetId = DataID;
   const tableId = TabID;
 
@@ -370,6 +365,20 @@ async function createTable(DataID, TabID, schemaprofile) {
     console.error('Error creating or checking table:', err);
   }
 }
+
+
+let PORT = 3000;
+//Listen for request on logs to vs
+app.listen(PORT, function () {
+  console.log(`Example app listening on port ${PORT}!`);
+  console.log(`http://localhost:${PORT}`);
+  console.log(`To Start O-Auth Process click on link below`);
+  console.log(`http://localhost:${PORT}/Initiate-OAuth`);
+  console.log('To Start process without OAuth using refresh tokens click on link below');
+  console.log(`http://localhost:${PORT}/Start`);
+});
+
+
 
 
 
