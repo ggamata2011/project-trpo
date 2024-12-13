@@ -32,7 +32,7 @@ const authURI = oauthClient.authorizeUri({
 });
 
 //CompanyID
-const companyID = process.env.REALM_ID != '' ? oauthClient.getToken().realmId : process.env.REALM_ID;
+const companyID = process.env.REALM_ID != '' ? process.env.REALM_ID : oauthClient.getToken().realmId;
 //Check oauthEnvironment
 const url = oauthClient.environment == 'sandbox' ? OAuthClient.environment.sandbox : OAuthClient.environment.production;
 
@@ -80,38 +80,37 @@ app.get('/Start',async(req, res) => {
 
    let Data = await GetInvoiceData();
    res.send("Test Page Send for Refresh Token Accessed, displaying data in console log");
-
-   console.log("\n\nInvoice Data:\n" + Data);
+   console.log("\n\nInvoice Data:\n" + JSON.stringify(Data));
 
    Data = await GetAccountData();
-   console.log("\n\nAccount Data:\n" + Data);
+   console.log("\n\nAccount Data:\n" + JSON.stringify(Data));
 
    Data = await GetBillData();
-   console.log("\n\nBill Data:\n" + Data);
+   console.log("\n\nBill Data:\n" + JSON.stringify(Data));
 
    Data = await GetCompanyData();
-   console.log("\n\nCompany Data:\n" + Data);
+   console.log("\n\nCompany Data:\n" + JSON.stringify(Data));
 
    Data = await GetCustomerData();
-   console.log("\n\nCustomer Data:\n" + Data);
+   console.log("\n\nCustomer Data:\n" + JSON.stringify(Data));
 
    Data = await GetEmployeeData();
-   console.log("\n\nEmployee Data:\n" + Data);
+   console.log("\n\nEmployee Data:\n" + JSON.stringify(Data));
 
    Data = await GetEstimateData();
-   console.log("\n\nEstimate Data:\n" + Data);
+   console.log("\n\nEstimate Data:\n" + JSON.stringify(Data));
 
    Data = await GetItemData();
-   console.log("\n\nItem Data:\n" + Data); 
+   console.log("\n\nItem Data:\n" + JSON.stringify(Data)); 
 
    Data = await GetPaymentData();
-   console.log("\n\nPayment Data:\n" + Data);
+   console.log("\n\nPayment Data:\n" + JSON.stringify(Data));
 
    Data = await getTaxAgencyData();
-   console.log("\n\nTax Agency Data:\n" + Data);
+   console.log("\n\nTax Agency Data:\n" + JSON.stringify(Data));
 
    Data = await getVendorData();
-   console.log("\n\nVendor Data:\n" + Data);
+   console.log("\n\nVendor Data:\n" + JSON.stringify(Data));
 
    //push Data to big query
    //await PushInvoiceData(Data);
@@ -181,13 +180,13 @@ async function RefreshAccessToken(opt)
 //Generic API Call Template
 async function GetAPICall(baseURL,CompID,query)
 {
-
+  console.log(`\nCalling with URL: ${baseURL}v3/company/${CompID}/query?query=${query}\n`)
 
   let ReturnData = null;
   if(await CheckAccessToken())
     {
       await oauthClient
-      .makeApiCall({ url: `${url}v3/company/${CompID}/query?query=${query}`})
+      .makeApiCall({ url: `${baseURL}v3/company/${CompID}/query?query=${query}`})
       .then(function (response) {
       //console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
         ReturnData = response.json;
@@ -201,7 +200,7 @@ async function GetAPICall(baseURL,CompID,query)
       console.error('Intuit Transaction ID:', e.intuit_tid || 'N/A');
       });
 
-      return Invoicedata;        
+      return ReturnData;        
 }
 else
 {
@@ -215,55 +214,55 @@ else
 //Invoice Object, made these to simplify calls
 async function GetInvoiceData()
 {
-   return GetAPICall(url,companyID,"select * from Invoice&minorversion=73");   
+   return await GetAPICall(url,companyID,"select * from Invoice&minorversion=73");   
 }
 
 //Account Object
 async function GetAccountData()
 {
-  return GetAPICall(url,companyID,"select * from Account&minorversion=73");
+  return  await GetAPICall(url,companyID,"select * from Account&minorversion=73");
 }
 
 //Bill Object
 async function GetBillData()
 {
-  return GetAPICall(url,companyID,"select * from bill&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from bill&minorversion=73");
 }
 
 //Get CompanyInfo Object
 async function GetCompanyData()
 {
-  return GetAPICall(url,companyID,"select * from CompanyInfo&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from CompanyInfo&minorversion=73");
 }
 
 //Get Customer Object
 async function GetCustomerData()
 {
-  return GetAPICall(url,companyID,"select * from Customer&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from Customer&minorversion=73");
 }
 
 //Get Employee Object
 async function GetEmployeeData()
 {
-  return GetAPICall(url,companyID,"select * from Employee&minorversion=73");
+  return  await GetAPICall(url,companyID,"select * from Employee&minorversion=73");
 }
 
 //Get Estimate Object
 async function GetEstimateData()
 {
-  return GetAPICall(url,companyID,"select * from estimate&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from estimate&minorversion=73");
 }
 
 //get Item Object
 async function GetItemData()
 {
-  return GetAPICall(url,companyID,"select * from Item&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from Item&minorversion=73");
 }
 
 //Get Payment Object
 async function GetPaymentData()
 {
-  return GetAPICall(url,companyID,"select * from Payment&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from Payment&minorversion=73");
 }
 
 
@@ -271,17 +270,17 @@ async function GetPaymentData()
 // please do not use this in the meanwhile
 async function GetProfitLossData()
 {
-  return GetAPICall(url,companyID,"select * from ProfitLoss&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from ProfitLoss&minorversion=73");
 }
 
 async function getTaxAgencyData()
 {
-  return GetAPICall(url,companyID,"select * from TaxAgency&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from TaxAgency&minorversion=73");
 }
 
 async function getVendorData()
 {
-  return GetAPICall(url,companyID,"select * from vendor&minorversion=73");
+  return await GetAPICall(url,companyID,"select * from vendor&minorversion=73");
 }
 
 
