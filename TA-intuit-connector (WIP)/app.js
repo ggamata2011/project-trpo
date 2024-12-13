@@ -2,24 +2,11 @@
 //Requires for using Environment variables
 require('dotenv').config();
 
-
-
-
+//Big query API requires
+const {BigQuery} = require('@google-cloud/bigquery');
 //Instantiate App with express
 var express = require('express');
 var app = express();
-
-//Instantiate Intuit Client
-const OAuthClient= require('intuit-oauth')
-const oauthClient = new OAuthClient({
-  clientId: process.env.CLIENT_ID,
-  clientSecret: process.env.CLIENT_SECRET,
-  environment: 'sandbox' || 'production',
-  redirectUri: process.env.CLIENT_REDIRECT,
-});
-
-//some old code to omit   environment: 'sandbox' || 'production',
-
 
 //Body-parser used for parsing and organizing request data 
 const bodyParser = require('body-parser');
@@ -28,8 +15,26 @@ app.use(bodyParser.json());
 //Parse JSON bodies
 app.use(express.json());
 
-//Big query API requires
-const {BigQuery} = require('@google-cloud/bigquery');
+//Instantiate Intuit Client
+const OAuthClient= require('intuit-oauth')
+const oauthClient = new OAuthClient({
+  clientId: process.env.CLIENT_ID,
+  clientSecret: process.env.CLIENT_SECRET,
+  environment: 'production',
+  redirectUri: process.env.CLIENT_REDIRECT,
+
+});
+
+//some old code to environment: 'sandbox' || 'production',
+const authURI = oauthClient.authorizeUri({
+  scope:[OAuthClient.scopes.Accounting],
+  state:'ta-intuit-test'
+});
+
+//CompanyID
+const companyID = process.env.REALM_ID != '' ? oauthClient.getToken().realmId : process.env.REALM_ID;
+//Check oauthEnvironment
+const url = oauthClient.environment == 'sandbox' ? OAuthClient.environment.sandbox : OAuthClient.environment.production;
 
 const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
@@ -52,10 +57,8 @@ const InvoiceSchema = [
   { name: 'LastUpdatedTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
 ];
 
-
 //Instantiate Token to null 
 let OAUTH2_Token = null;
-
 
 //Webhook API Endpoint
 app.post('/TA-Intuit',(req,res) => {
@@ -79,68 +82,9 @@ app.get('/Start',async(req, res) => {
    res.send("Test Page Send for Refresh Token Accessed, displaying data\n\n" + JSON.stringify(Data));
 
    //push Data to big query
-   PushInvoiceData(Data);
+   await PushInvoiceData(Data);
 });
    
-
-/* 
-******************************************************************
-*/
-//Below 3 functions are for OAuth Purposes for obtaining Tokens, may not be used anymore in favor of refresh tokens
-app.get('/Initiate-OAuth',function (req,res ){
-     //Instantiate AuthURI
-  const authURI = oauthClient.authorizeUri({
-    scope:[OAuthClient.scopes.Accounting],
-    state:'ta-intuit-test'
-  });
-
-  //Begin Redirect
-  res.redirect(authURI);
-});
-//Callback Page after OAuth-Redirec 
-app.get('/TA-Intuit-Callback', function (req, res) {
-  //res.send('Hello World! this is a test for the callback function');
-  //Callback logic for storing shit goes into here
- 
-  console.log("Callback begun");
-   InitateAccessTokenGET(req);
-});
-async function InitateAccessTokenGET(req)
-{
-  console.log('initate access token get');
-  await oauthClient
-  .createToken(req.url)
-  .then(function (authResponse) {
-    console.log('The Token is  ' + JSON.stringify(authResponse.json));
-    OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
-  })
-  .catch(function (e) {
-    console.error(e);
-  });
-
-   //Create Tables
-   await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
-    
-   //Get Invoice (Temporarily commented out)
-   let InvoiceData = await GetInvoiceData();
-   await PushInvoiceData(InvoiceData);
-
-   // Schedule the token refresh to happen every 60 minutes (3600 seconds)
-   // Old CODE 60 * 60 * 1000
-   setInterval(RefreshAccessToken, 55 * 60 * 1000);
-   console.log('Refresh Access Token Timer Started')
-
-   //Set Interval for Getting Invoice Data
-   setInterval(GetInvoiceData,60 * 60 * 1000);
-
-
-}
-//3 functions for OAUTH end here 
-
-/* 
-******************************************************************
-*/
-
 //Check if Token is still valid, may call Refresh Token if needed
 async function CheckAccessToken()
 {
@@ -200,41 +144,27 @@ async function RefreshAccessToken(opt)
 
    
     
-  }
+}
   
-//Code below will contain Functions for starting API calls
-async function GetInvoiceData()
+//Generic API Call Template
+async function GetAPICall(baseURL,CompID,query)
 {
-   //Instantiate Invoice data
-   let Invoicedata = null;
-
-    if(await CheckAccessToken())
+  let ReturnData = null;
+  if(await CheckAccessToken())
     {
-      let companyID = '';
-      
-      if(process.env.REALM_ID != '')
-      {
-         companyID = process.env.REALM_ID;
-      }
-      else
-      {
-         companyID = oauthClient.getToken().realmId;
-      }
-      
-
-      const url =
-        oauthClient.environment == 'sandbox'
-          ? OAuthClient.environment.sandbox
-          : OAuthClient.environment.production;
-
       await oauthClient
-      .makeApiCall({ url: `${url}v3/company/${companyID}/query?query=select * from Invoice&minorversion=73`})
+      .makeApiCall({ url: `${url}v3/company/${CompID}/query?query=${query}`})
       .then(function (response) {
       //console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
-        Invoicedata = response.json;
+        ReturnData = response.json;
       })
       .catch(function (e) {
-      console.error(e);
+      
+      console.error('Request failed with status code:', e.response?.status);
+      console.error('Response body:', e.response?.data);
+      console.error('Headers:', e.response?.headers);
+      console.error('Original error message:', e.message);
+      console.error('Intuit Transaction ID:', e.intuit_tid || 'N/A');
       });
 
       return Invoicedata;        
@@ -245,13 +175,85 @@ else
   return null
 }
 
+
 }
+
+//Invoice Object, made these to simplify calls
+async function GetInvoiceData()
+{
+   return GetAPICall(url,companyID,"select * from Invoice&minorversion=73");   
+}
+
+//Account Object
+async function GetAccountData()
+{
+  return GetAPICall(url,companyID,"select * from Account&minorversion=73");
+}
+
+//Bill Object
+async function GetBillData()
+{
+  return GetAPICall(url,companyID,"select * from Bill&minorversion=73");
+}
+
+//Get CompanyInfo Object
+async function GetCompanyData()
+{
+  return GetAPICall(url,companyID,"select * from CompanyInfo&minorversion=73");
+}
+
+//Get Customer Object
+async function GetCustomerData()
+{
+  return GetAPICall(url,companyID,"select * from Customer&minorversion=73");
+}
+
+//Get Employee Object
+async function GetEmployeeData()
+{
+  return GetAPICall(url,companyID,"select * from Employee&minorversion=73");
+}
+
+//Get Estimate Object
+async function GetEstimateData()
+{
+  return GetAPICall(url,companyID,"select * from Estimate&minorversion=73");
+}
+
+//get Item Object
+async function GetItemData()
+{
+  return GetAPICall(url,companyID,"select * from Item&minorversion=73");
+}
+
+//Get Payment Object
+async function GetPaymentData()
+{
+  return GetAPICall(url,companyID,"select * from Payment&minorversion=73");
+}
+
+
+async function GetProfitLossData()
+{
+  return GetAPICall(url,companyID,"select * from ProfitLoss&minorversion=73");
+}
+
+async function getTaxAgencyData()
+{
+  return GetAPICall(url,companyID,"select * from TaxAgency&minorversion=73");
+}
+
+async function getVendorData()
+{
+  return GetAPICall(url,companyID,"select * from Vendor&minorversion=73");
+}
+
 
 async function PushInvoiceData(InvoiceData)
 {
   if(InvoiceData)
   {
-    let TransformedData = TransformJSON(InvoiceData);
+    let TransformedData = TransformJSONInvoice(InvoiceData);
     await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
     await PushDataBQ("Invoice","Invoice_Detail",TransformedData);
   }
@@ -262,8 +264,8 @@ async function PushInvoiceData(InvoiceData)
   
 }
 
-//Convert to JSON new line delimited for Google BQ(used for streaming data inserts)
-async function TransformJSON(Data)
+//Transform Data from API call into one that fits Schema(used for streaming data inserts)
+async function TransformJSONInvoice(Data)
 {
   // Assume `apiResponse.QueryResponse.Invoice` contains an array of invoices
   if(Data)
@@ -295,7 +297,6 @@ async function TransformJSON(Data)
 }
 
 //Google Big Query Functions Below
-
 //Push Data onto Google Big Query
 async function PushDataBQ(DataID,TabID,RowData)
 {
@@ -378,6 +379,62 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}/Start`);
 });
 
+
+/* 
+Below 3 functions are for OAuth Purposes for obtaining Tokens, may not be used anymore in favor of refresh tokens
+******************************************************************
+*/
+app.get('/Initiate-OAuth',function (req,res ){
+  //Instantiate AuthURI
+const authURI = oauthClient.authorizeUri({
+ scope:[OAuthClient.scopes.Accounting],
+ state:'ta-intuit-test'
+});
+
+//Begin Redirect
+res.redirect(authURI);
+});
+//Callback Page after OAuth-Redirec 
+app.get('/TA-Intuit-Callback', function (req, res) {
+//res.send('Hello World! this is a test for the callback function');
+//Callback logic for storing shit goes into here
+
+console.log("Callback begun");
+InitateAccessTokenGET(req);
+});
+async function InitateAccessTokenGET(req)
+{
+console.log('initate access token get');
+await oauthClient
+.createToken(req.url)
+.then(function (authResponse) {
+ console.log('The Token is  ' + JSON.stringify(authResponse.json));
+ OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
+})
+.catch(function (e) {
+ console.error(e);
+});
+
+//Create Tables
+await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
+ 
+//Get Invoice (Temporarily commented out)
+let InvoiceData = await GetInvoiceData();
+await PushInvoiceData(InvoiceData);
+
+// Schedule the token refresh to happen every 60 minutes (3600 seconds)
+// Old CODE 60 * 60 * 1000
+setInterval(RefreshAccessToken, 55 * 60 * 1000);
+console.log('Refresh Access Token Timer Started')
+
+//Set Interval for Getting Invoice Data
+setInterval(GetInvoiceData,60 * 60 * 1000);
+
+
+}
+/* 
+******************************************************************
+*/
 
 
 
