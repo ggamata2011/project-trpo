@@ -79,10 +79,42 @@ app.get('/Start',async(req, res) => {
    console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
    let Data = await GetInvoiceData();
-   res.send("Test Page Send for Refresh Token Accessed, displaying data\n\n" + JSON.stringify(Data));
+   res.send("Test Page Send for Refresh Token Accessed, displaying data in console log");
+
+   console.log("\n\nInvoice Data:\n" + Data);
+
+   Data = await GetAccountData();
+   console.log("\n\nAccount Data:\n" + Data);
+
+   Data = await GetBillData();
+   console.log("\n\nBill Data:\n" + Data);
+
+   Data = await GetCompanyData();
+   console.log("\n\nCompany Data:\n" + Data);
+
+   Data = await GetCustomerData();
+   console.log("\n\nCustomer Data:\n" + Data);
+
+   Data = await GetEmployeeData();
+   console.log("\n\nEmployee Data:\n" + Data);
+
+   Data = await GetEstimateData();
+   console.log("\n\nEstimate Data:\n" + Data);
+
+   Data = await GetItemData();
+   console.log("\n\nItem Data:\n" + Data); 
+
+   Data = await GetPaymentData();
+   console.log("\n\nPayment Data:\n" + Data);
+
+   Data = await getTaxAgencyData();
+   console.log("\n\nTax Agency Data:\n" + Data);
+
+   Data = await getVendorData();
+   console.log("\n\nVendor Data:\n" + Data);
 
    //push Data to big query
-   await PushInvoiceData(Data);
+   //await PushInvoiceData(Data);
 });
    
 //Check if Token is still valid, may call Refresh Token if needed
@@ -149,6 +181,8 @@ async function RefreshAccessToken(opt)
 //Generic API Call Template
 async function GetAPICall(baseURL,CompID,query)
 {
+
+
   let ReturnData = null;
   if(await CheckAccessToken())
     {
@@ -193,7 +227,7 @@ async function GetAccountData()
 //Bill Object
 async function GetBillData()
 {
-  return GetAPICall(url,companyID,"select * from Bill&minorversion=73");
+  return GetAPICall(url,companyID,"select * from bill&minorversion=73");
 }
 
 //Get CompanyInfo Object
@@ -217,7 +251,7 @@ async function GetEmployeeData()
 //Get Estimate Object
 async function GetEstimateData()
 {
-  return GetAPICall(url,companyID,"select * from Estimate&minorversion=73");
+  return GetAPICall(url,companyID,"select * from estimate&minorversion=73");
 }
 
 //get Item Object
@@ -233,6 +267,8 @@ async function GetPaymentData()
 }
 
 
+//This may need to be refactored to inlcude date range
+// please do not use this in the meanwhile
 async function GetProfitLossData()
 {
   return GetAPICall(url,companyID,"select * from ProfitLoss&minorversion=73");
@@ -245,7 +281,7 @@ async function getTaxAgencyData()
 
 async function getVendorData()
 {
-  return GetAPICall(url,companyID,"select * from Vendor&minorversion=73");
+  return GetAPICall(url,companyID,"select * from vendor&minorversion=73");
 }
 
 
@@ -366,7 +402,6 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
     console.error('Error creating or checking table:', err);
   }
 }
-
 
 let PORT = 3000;
 //Listen for request on logs to vs
