@@ -20,7 +20,7 @@ const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  environment: 'production',
+  environment: 'sandbox',
   redirectUri: process.env.CLIENT_REDIRECT,
 
 });
@@ -78,39 +78,370 @@ app.get('/Start',async(req, res) => {
    console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
    console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
+   let ResData = "";
+
    let Data = await GetInvoiceData();
-   res.send("Test Page Send for Refresh Token Accessed, displaying data in console log");
-   console.log("\n\nInvoice Data:\n" + JSON.stringify(Data));
+  
+   console.log("\n\nInvoice Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nInvoice Data:\n" + PrettyPrint(Data);
 
    Data = await GetAccountData();
-   console.log("\n\nAccount Data:\n" + JSON.stringify(Data));
+   console.log("\n\nAccount Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nAccount Data:\n" + PrettyPrint(Data);
 
    Data = await GetBillData();
-   console.log("\n\nBill Data:\n" + JSON.stringify(Data));
+   console.log("\n\nBill Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nBill Data:\n" + PrettyPrint(Data);
 
    Data = await GetCompanyData();
-   console.log("\n\nCompany Data:\n" + JSON.stringify(Data));
+   console.log("\n\nCompany Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nCompany Data:\n" + PrettyPrint(Data);
 
    Data = await GetCustomerData();
-   console.log("\n\nCustomer Data:\n" + JSON.stringify(Data));
+   console.log("\n\nCustomer Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nCustomer Data:\n" + PrettyPrint(Data);
 
    Data = await GetEmployeeData();
-   console.log("\n\nEmployee Data:\n" + JSON.stringify(Data));
+   console.log("\n\nEmployee Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nEmployee Data:\n" + PrettyPrint(Data);
 
    Data = await GetEstimateData();
-   console.log("\n\nEstimate Data:\n" + JSON.stringify(Data));
-
+   console.log("\n\nEstimate Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nEstimate Data:\n" + PrettyPrint(Data);
+   
    Data = await GetItemData();
-   console.log("\n\nItem Data:\n" + JSON.stringify(Data)); 
+   console.log("\n\nItem Data:\n" + PrettyPrint(Data)); 
+   ResData += "\n\nItem Data:\n" + PrettyPrint(Data);
 
    Data = await GetPaymentData();
-   console.log("\n\nPayment Data:\n" + JSON.stringify(Data));
+   console.log("\n\nPayment Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nPayment Data:\n" + PrettyPrint(Data);
 
    Data = await getTaxAgencyData();
-   console.log("\n\nTax Agency Data:\n" + JSON.stringify(Data));
+   console.log("\n\nTax Agency Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nTax Agency Data:\n" + PrettyPrint(Data);
 
    Data = await getVendorData();
-   console.log("\n\nVendor Data:\n" + JSON.stringify(Data));
+   console.log("\n\nVendor Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nVendor Data:\n" + PrettyPrint(Data);
+
+   Data = await GetAccountListData();
+   console.log("\n\nAccount List Data:\n" + PrettyPrint(Data));
+   ResData += "\n\nAccount List Data:\n" + PrettyPrint(Data);
+
+   //Unfunctionized code, will be used in future versions
+   
+  //NOTE: All Reports have customizable queries that we will need to discuss
+  // ************************************************************************** 
+  //Query AccountListDetail Report
+  ResData += ("\n\nAccountListDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AccountList?columns=account_name,account_type&account_type=Income&minorversion=73")));
+
+  //Query APAgingDetail Report
+   ResData += ("\n\nAPAgingDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedPayableDetail?report_date=2015-06-30&start_duedate=2015-01-01&end_duedate=2015-06-30&columns=due_date,vend_name&minorversion=73")));
+
+  //Query APAgingSummary Report
+   ResData += ("\n\nAPAgingSummary:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedPayables?date_macro=Today&minorversion=73")));
+
+  //Query ARAgingDetail Report
+   ResData += ("\n\nARAgingDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedReceivableDetail?report_date=2015-06-30&start_duedate=2015-01-01&end_duedate=2015-06-30&columns=due_date,cust_name&minorversion=73")));
+
+   //Query ARAgingSummary Report
+   ResData += ("\n\nARAgingSummary:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedReceivables?customer=4&date_macro=Last Fiscal Year&minorversion=73")));
+
+   //Query Attachable Object
+   ResData += ("\n\nAttachable:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from attachable&minorversion=73")));
+
+   //Query BalanceSheet Report
+   ResData += ("\n\nBalanceSheet:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/BalanceSheet?date_macro=Last Fiscal Year-to-date&minorversion=73")));
+
+   //Query Bill Object
+   ResData += ("\n\nBill:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from bill&minorversion=73")));
+
+   //Query BillPayment Object
+   ResData += ("\n\nBillPayment:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from billpayment&minorversion=73")));
+
+   //Query budget Object
+   ResData += ("\n\nbudget:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=Select * from Budget&minorversion=73")));
+
+   //Query CashFlow Object
+   ResData += ("\n\nCashFlow:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CashFlow?minorversion=73")));
+
+   //Query ChangedDataCapture Report
+   //Queries for changed data from a certain date
+   //will need to be customized
+   ResData += ("\n\nChangedDataCapture:\n" + PrettyPrint(await GetAPICall(url,companyID,"cdc?entities=Customer,Estimate&changedSince=2015-11-28&minorversion=73")));
+
+   //Queries Class Object
+   ResData += ("\n\nClass:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select  * from Class&minorversion=73")));
+
+   //Query CompanyCurrency Object
+   ResData += ("\n\nCompanyCurrency:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from companycurrency&minorversion=73")));
+
+   //Query Credit Memo Object
+   ResData += ("\n\nCreditMemo:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=Select * from CreditMemo&minorversion=73")));
+
+   /*
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+
+   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   */
+
+
+   res.send("Test Page Send for Refresh Token Accessed, displaying data in console log, and sending response\n\n" + ResData);
 
    //push Data to big query
    //await PushInvoiceData(Data);
@@ -180,13 +511,13 @@ async function RefreshAccessToken(opt)
 //Generic API Call Template
 async function GetAPICall(baseURL,CompID,query)
 {
-  console.log(`\nCalling with URL: ${baseURL}v3/company/${CompID}/query?query=${query}\n`)
+  console.log(`\nCalling with URL: ${baseURL}v3/company/${CompID}/${query}\n`)
 
   let ReturnData = null;
   if(await CheckAccessToken())
     {
       await oauthClient
-      .makeApiCall({ url: `${baseURL}v3/company/${CompID}/query?query=${query}`})
+      .makeApiCall({ url: `${baseURL}v3/company/${CompID}/${query}`})
       .then(function (response) {
       //console.log(`\n The response for API call is :${JSON.stringify(response.json)}`);
         ReturnData = response.json;
@@ -211,58 +542,71 @@ else
 
 }
 
+//Re-usable functions
+function PrettyPrint(Data)
+{
+  return JSON.stringify(Data, null, 2);
+}
+
+
 //Invoice Object, made these to simplify calls
 async function GetInvoiceData()
 {
-   return await GetAPICall(url,companyID,"select * from Invoice&minorversion=73");   
+   return await GetAPICall(url,companyID,"query?query=select * from Invoice&minorversion=73");   
 }
 
 //Account Object
 async function GetAccountData()
 {
-  return  await GetAPICall(url,companyID,"select * from Account&minorversion=73");
+  return  await GetAPICall(url,companyID,"query?query=select * from Account&minorversion=73");
+}
+
+//Get Account List Detail
+async function GetAccountListData()
+{
+  return  await GetAPICall(url,companyID,"reports/AccountList?columns=account_name,account_type&account_type=Income&minorversion=73");
 }
 
 //Bill Object
 async function GetBillData()
 {
-  return await GetAPICall(url,companyID,"select * from bill&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from bill&minorversion=73");
 }
 
 //Get CompanyInfo Object
 async function GetCompanyData()
 {
-  return await GetAPICall(url,companyID,"select * from CompanyInfo&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from CompanyInfo&minorversion=73");
 }
 
 //Get Customer Object
 async function GetCustomerData()
 {
-  return await GetAPICall(url,companyID,"select * from Customer&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
 }
 
 //Get Employee Object
 async function GetEmployeeData()
 {
-  return  await GetAPICall(url,companyID,"select * from Employee&minorversion=73");
+  return  await GetAPICall(url,companyID,"query?query=select * from Employee&minorversion=73");
 }
 
 //Get Estimate Object
 async function GetEstimateData()
 {
-  return await GetAPICall(url,companyID,"select * from estimate&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from estimate&minorversion=73");
 }
 
 //get Item Object
 async function GetItemData()
 {
-  return await GetAPICall(url,companyID,"select * from Item&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from Item&minorversion=73");
 }
 
 //Get Payment Object
 async function GetPaymentData()
 {
-  return await GetAPICall(url,companyID,"select * from Payment&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from Payment&minorversion=73");
 }
 
 
@@ -270,17 +614,17 @@ async function GetPaymentData()
 // please do not use this in the meanwhile
 async function GetProfitLossData()
 {
-  return await GetAPICall(url,companyID,"select * from ProfitLoss&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from ProfitLoss&minorversion=73");
 }
 
 async function getTaxAgencyData()
 {
-  return await GetAPICall(url,companyID,"select * from TaxAgency&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from TaxAgency&minorversion=73");
 }
 
 async function getVendorData()
 {
-  return await GetAPICall(url,companyID,"select * from vendor&minorversion=73");
+  return await GetAPICall(url,companyID,"query?query=select * from vendor&minorversion=73");
 }
 
 
