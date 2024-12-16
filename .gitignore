@@ -6,6 +6,11 @@
 /.pnp
 .pnp.js
 
+# Service Account Keys
+stripe-connector/stripe-bamrec-767863fb1b1a.json
+stripe-connector/tableu-442921-2589eb103d9b.json
+stripe-connector/tableu-442921-272d860b3fc9.json
+
 # testing
 /coverage
 
