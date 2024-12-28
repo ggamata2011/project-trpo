@@ -1,5 +1,5 @@
 // Requiring environment variables
-require('dotenv').config({ path: '../.env' });
+require('dotenv').config();
 
 // Imports the Google Cloud client library
 const { BigQuery } = require('@google-cloud/bigquery');
@@ -8,7 +8,8 @@ const { BigQuery } = require('@google-cloud/bigquery');
 const bigquery = new BigQuery({
     //keyFilename: 'tableu-442921-2589eb103d9b.json', // Path to your service account key file
     //keyFilename: 'stripe-bamrec-767863fb1b1a.json'
-    keyFilename: 'tableu-442921-272d860b3fc9.json',
+    //keyFilename: 'tableu-442921-272d860b3fc9.json',
+    keyFilename: 'stripe-bamrec-a1e0f5c2bec0'
 });
 
 // Initialize the app with Express

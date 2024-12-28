@@ -20,10 +20,12 @@ const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  environment: 'sandbox',
+  environment: 'production',
   redirectUri: process.env.CLIENT_REDIRECT,
 
 });
+
+
 
 //some old code to environment: 'sandbox' || 'production',
 const authURI = oauthClient.authorizeUri({
@@ -40,6 +42,142 @@ const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
   projectId: 'tableu-442921', // Replace with your project ID
 })
+
+//Infer A Schema for a report
+async function InferSchemaReport(data)
+{
+  let InferredSchema = [];
+
+  //Get Column Names and Data Types
+  for(let i = 0; i < data.Columns.Column.length; i++)
+  {
+    InferredSchema.push({ name: removeSpecialCharacters(data.Columns.Column[i].ColTitle), type: ResolveBQType(data.Columns.Column[i].ColType), mode: 'NULLABLE' });
+  }
+
+  return InferredSchema;
+}
+
+function removeSpecialCharacters(input) {
+  // Replace all non-alphanumeric characters with a blank space
+  return input.replace(/[^a-zA-Z0-9 ]/g, '');
+}
+
+//Resolves Type to their appropriate BQ Type
+function ResolveBQType(type)
+{
+  //May add more as we come across more data
+  switch(type)
+  {
+    case 'String':
+      return 'STRING';
+      break;
+    case 'Date':
+      return 'DATE';
+      break;
+    case 'Money':
+      return "FLOAT";
+      break;
+    default:
+      return 'STRING';
+      break;
+  }
+}
+
+//Used to create Separate BQ Tables for Reports
+async function InferData(data,dataschema)
+{
+  // Holds Table names
+   let InferredTableNames = [];
+   //Tree Stack to keep of order
+   let TreeStack = [];
+   //Second Stack to keep of order
+   let MemoryStack = [];
+
+   //Get Top Level Column Names and Data Types
+  for(let i = 0; i < data.Rows.Row.length; i++)
+  {
+    //Check if Header Exists
+    if(data.Rows.Row[i].Header != undefined)
+    {
+      console.log('Root Node: ' + data.Rows.Row[i].Header.ColData[0].value);
+      
+      //Push Tree from first Level into stack
+      TreeStack.push(data.Rows.Row[i]);
+
+      //Traverse Parent Node using Stack
+      while(TreeStack.length > 0)
+      {
+        //Set current level
+         let CurrentLevel = TreeStack.pop();
+
+         //If there are children, add to stack and go one level down
+         // this iswhere im having issues
+         if(CurrentLevel.Rows != undefined && Array.isArray(CurrentLevel.Rows.Row))
+         {
+          //Add Children one level down
+          for(let i = 0; i < CurrentLevel.Rows.Row.length; i++)
+          {    
+              if(CurrentLevel.Rows.Row[i].Header != undefined)   
+              {
+                MemoryStack.push(CurrentLevel.Rows.Row[i]);
+              }
+              
+          }   
+         }  
+
+         //Check if Current Level is at bottom
+         if (CurrentLevel.Rows.Row[0].ColData != undefined && CurrentLevel.Rows.Row[0].type == 'Data')
+          {
+            console.log("Table Name Data:" + CurrentLevel.Header.ColData[0].value);
+            InferredTableNames.includes(CurrentLevel.Header.ColData[0].value) ? null:InferredTableNames.push(CurrentLevel.Header.ColData[0].value);
+            
+            //Create Table
+            let FullTable = [];
+
+            //Loop through Each data fields to transform to appropriate schema
+            for(let j = 0;j < CurrentLevel.Rows.Row.length; j++)
+            {
+              let TableRow = {};
+              
+              //loop through each subportion
+              for(let k = 0; k < CurrentLevel.Rows.Row[j].ColData.length; k++)
+              {
+                console.log('value item: ' + CurrentLevel.Rows.Row[j].ColData[k].value);
+
+                TableRow[dataschema[k].name] = CurrentLevel.Rows.Row[j].ColData[k].value;
+              }
+
+              FullTable.push(TableRow);
+            }
+
+            //Create Dataset and Table, push contents to BigQuery
+            await createTableBQ("IntuitProfitLoss", removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
+            await PushDataBQ("IntuitProfitLoss",removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
+
+          }
+
+
+         //If Exhausted all children, push back onto MainStack
+         if(TreeStack.length == 0 && MemoryStack.length != 0)
+         {
+           while(MemoryStack.length > 0)
+           {
+              TreeStack.push(MemoryStack.pop());
+           }
+         }        
+      }
+    }      
+  }
+
+  //Display Inferred TableNames
+  console.log(InferredTableNames);
+  
+  return InferredTableNames;
+}
+
+//Create Table Names for
+
+
 
 //Schemas
 const InvoiceSchema = [
@@ -71,6 +209,32 @@ app.post('/TA-Intuit',(req,res) => {
    
 });
 
+//Endpoint for Reporting Profit and Loss
+app.get('/ProfitLoss',async(req, res) => {
+
+  console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
+  console.log("RealmID is: " + process.env.REALM_ID);
+  console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
+  console.log("The refresh token is " + process.env.REFRESH_TOKEN );
+
+
+  let Data = await getProfitLossDetailData("This Fiscal Year-to-date","sort_by=Date");
+
+  let Schema = await InferSchemaReport(Data);
+
+  InferData(Data,Schema);
+
+  //console.log(InvoiceSchema);
+
+  //console.log(InferSchema(Data));
+
+  //console.log("\n\nProfit and Loss Data:\n" + PrettyPrint(Data));
+  //res.send("\n\nProfit and Loss Data:\n" + PrettyPrint(Data));
+  res.send("OK! Check Console");
+});
+
+
+//General functions for testing GET requests provided by Intuit API
 app.get('/Start',async(req, res) => {
    //Check Token and IDs
    console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
@@ -180,273 +344,61 @@ app.get('/Start',async(req, res) => {
    //Query Credit Memo Object
    ResData += ("\n\nCreditMemo:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=Select * from CreditMemo&minorversion=73")));
 
-   /*
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query CreditCardPayment Object
+   ResData += ("\n\nCreditCardPayment:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from creditcardpayment&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   // Query CustomerBalance Report
+   ResData += ("\n\nCustomerBalance:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerBalance?customer=1&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query CustomerBalance Detail Report
+   ResData += ("\n\nCustomerBalanceDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerBalanceDetail?customer=1&start_duedate=2015-08-01&end_duedate=2015-09-30&columns=subt_amount,tx_date&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query Customer Income Report
+   ResData += ("\n\nCustomerIncome:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerIncome?customer=1&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query Department Object
+   ResData += ("\n\nDepartment:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from Department&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query Deposit Object
+   ResData += ("\n\nDeposit:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from Deposit&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query General Ledger Report
+   ResData += ("\n\nGeneralLedgerReport:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/GeneralLedger?start_date=2015-01-01&end_date=2015-06-30&columns=account_name,subt_nat_amount&source_account_type=Bank&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query JournalEntry Object
+   ResData += ("\n\nJournalEntry:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from JournalEntry&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query Journal Report
+   ResData += ("\n\nJournalReport:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/JournalReport?minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Query Profit and Loss Detail Report
+   ResData += ("\n\nProfitAndLossDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/ProfitAndLossDetail?start_date=2015-06-01&end_date=2015-06-30&customer=3&columns=tx_date%252Cname%252Csubt_nat_amount&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Sales by Class Summary Report
+   ResData += ("\n\nClass Summary:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/ClassSales?class=2&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Sales by Customer Report
+   ResData += ("\n\nCustomer Sales:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerSales?customer=1&start_date=2015-08-01&end_date=2015-09-30&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Sales by Department Report
+   ResData += ("\n\nDepartment Sales:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/DepartmentSales?start_date=2015-08-01&end_date=2015-09-30&minorversion=73")));
 
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
+   //Sales by Product Report
+   ResData += ("\n\nProduct Sales:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/ItemSales?start_duedate=2015-08-01&end_duedate=2015-09-30&minorversion=73")));
 
    ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
 
    ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
 
    ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-   */
-
 
    res.send("Test Page Send for Refresh Token Accessed, displaying data in console log, and sending response\n\n" + ResData);
 
    //push Data to big query
    //await PushInvoiceData(Data);
-});
-   
+})
+
+  
 //Check if Token is still valid, may call Refresh Token if needed
 async function CheckAccessToken()
 {
@@ -489,8 +441,6 @@ async function RefreshAccessToken(opt)
   .refreshUsingToken(process.env.REFRESH_TOKEN)
   .then(function (authResponse) {
     console.log('Tokens refreshed : ' + JSON.stringify(authResponse.json));
-
-
 
   })
   .catch(function (e) {
@@ -547,7 +497,6 @@ function PrettyPrint(Data)
 {
   return JSON.stringify(Data, null, 2);
 }
-
 
 //Invoice Object, made these to simplify calls
 async function GetInvoiceData()
@@ -609,13 +558,38 @@ async function GetPaymentData()
   return await GetAPICall(url,companyID,"query?query=select * from Payment&minorversion=73");
 }
 
-
 //This may need to be refactored to inlcude date range
 // please do not use this in the meanwhile
 async function GetProfitLossData()
 {
   return await GetAPICall(url,companyID,"query?query=select * from ProfitLoss&minorversion=73");
 }
+
+async function getProfitLossDetailData(date_macro,options)
+{
+  //Date Macro choices
+  /* Today, Yesterday, This Week, Last Week, 
+  This Week-to-date, Last Week-to-date, 
+  Next Week, Next 4 Weeks, This Month, 
+  Last Month, This Month-to-date, Last Month-to-date, 
+  Next Month, This Fiscal Quarter, Last Fiscal Quarter, 
+  This Fiscal Quarter-to-date, Last Fiscal Quarter-to-date, 
+  Next Fiscal Quarter, This Fiscal Year, Last Fiscal Year, 
+  This Fiscal Year-to-date, Last Fiscal Year-to-date, Next Fiscal Year */
+
+  //Gets General report info with only date
+  if(options != "")
+  {
+    return await GetAPICall(url,companyID,`reports/ProfitAndLossDetail?date_macro=${date_macro}&minorversion=73`);
+  }
+  else
+  {
+    //options are delimited by &
+    //return with extra options
+    return await GetAPICall(url,companyID,`reports/ProfitAndLossDetail?date_macro=${date_macro}&${options}&minorversion=73`);
+  }
+  
+} 
 
 async function getTaxAgencyData()
 {
@@ -626,7 +600,6 @@ async function getVendorData()
 {
   return await GetAPICall(url,companyID,"query?query=select * from vendor&minorversion=73");
 }
-
 
 async function PushInvoiceData(InvoiceData)
 {
@@ -642,6 +615,7 @@ async function PushInvoiceData(InvoiceData)
   }
   
 }
+
 
 //Transform Data from API call into one that fits Schema(used for streaming data inserts)
 async function TransformJSONInvoice(Data)
@@ -746,6 +720,8 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
   }
 }
 
+
+
 let PORT = 3000;
 //Listen for request on logs to vs
 app.listen(PORT, function () {
@@ -753,8 +729,8 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}`);
   console.log(`To Start O-Auth Process click on link below`);
   console.log(`http://localhost:${PORT}/Initiate-OAuth`);
-  console.log('To Start process without OAuth using refresh tokens click on link below');
-  console.log(`http://localhost:${PORT}/Start`);
+  console.log('To get Profit and Loss data without OAuth using refresh tokens click on link below');
+  console.log(`http://localhost:${PORT}/ProfitLoss`);
 });
 
 
