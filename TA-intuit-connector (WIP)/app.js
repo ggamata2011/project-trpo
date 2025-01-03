@@ -25,8 +25,6 @@ const oauthClient = new OAuthClient({
 
 });
 
-
-
 //some old code to environment: 'sandbox' || 'production',
 const authURI = oauthClient.authorizeUri({
   scope:[OAuthClient.scopes.Accounting],
@@ -42,6 +40,32 @@ const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
   projectId: 'tableu-442921', // Replace with your project ID
 })
+
+//Integer used to determine if OAuth or Refresh Token is used
+let FirstRunOption = 2;
+
+//Schemas
+const InvoiceSchema = [
+  { name: 'TxnDate', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'TotalAmt', type: 'FLOAT', mode: 'NULLABLE' },
+  { name: 'DocNumber', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'CustomerName', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'CustomerValue', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'Lines', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'DueDate', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'Email', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'ShipAddr', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'BillAddr', type: 'STRING', mode: 'NULLABLE' },
+  { name: 'CreateTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
+  { name: 'LastUpdatedTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
+];
+
+//Schema for Storing Refresh_Token
+const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
+
+//Instantiate Token to null 
+let OAUTH2_Token = null;
+
 
 //Infer A Schema for a report
 async function InferSchemaReport(data)
@@ -151,8 +175,8 @@ async function InferData(data,dataschema)
             }
 
             //Create Dataset and Table, push contents to BigQuery
-            await createTableBQ("IntuitProfitLoss", removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
-            await PushDataBQ("IntuitProfitLoss",removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
+            //await createTableBQ("IntuitProfitLoss", removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
+            //await PushDataBQ("IntuitProfitLoss",removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
 
           }
 
@@ -175,35 +199,21 @@ async function InferData(data,dataschema)
   return InferredTableNames;
 }
 
-//Create Table Names for
+app.get('/Store-Keys',async (req,res) => {
 
+});
 
-
-//Schemas
-const InvoiceSchema = [
-  { name: 'TxnDate', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'TotalAmt', type: 'FLOAT', mode: 'NULLABLE' },
-  { name: 'DocNumber', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'CustomerName', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'CustomerValue', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'Lines', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'DueDate', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'Email', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'ShipAddr', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'BillAddr', type: 'STRING', mode: 'NULLABLE' },
-  { name: 'CreateTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
-  { name: 'LastUpdatedTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
-];
-
-//Instantiate Token to null 
-let OAUTH2_Token = null;
+app.get('/Get-Stored-Keys',async(req, res) => {
+   
+})
 
 //Webhook API Endpoint
 app.post('/TA-Intuit',(req,res) => {
 
- console.log('Received Request:' + req.body);
+ console.log('Received Request:' + JSON.stringify(req.body));
+ 
  //Some Logic to pull Invoice data or possibly a switch for other types of data
- GetInvoiceData();
+ //GetInvoiceData();
  // Send a response
  res.status(200).send('Webhook received successfully');
    
@@ -212,6 +222,7 @@ app.post('/TA-Intuit',(req,res) => {
 //Endpoint for Reporting Profit and Loss
 app.get('/ProfitLoss',async(req, res) => {
 
+  process.env.REFRESH_TOKEN = await GetRefreshTokenBQ();
   console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
   console.log("RealmID is: " + process.env.REALM_ID);
   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
@@ -231,6 +242,14 @@ app.get('/ProfitLoss',async(req, res) => {
   //console.log("\n\nProfit and Loss Data:\n" + PrettyPrint(Data));
   //res.send("\n\nProfit and Loss Data:\n" + PrettyPrint(Data));
   res.send("OK! Check Console");
+});
+
+//Refresh Timer used for testing refresh tokens only
+app.get('/StartRefreshTimers',(req,res) =>{
+  CheckAccessToken();
+
+setInterval(CheckAccessToken, 65 * 60 * 1000);
+console.log('Refresh Access Token Timer Started')
 });
 
 
@@ -397,8 +416,7 @@ app.get('/Start',async(req, res) => {
    //push Data to big query
    //await PushInvoiceData(Data);
 })
-
-  
+ 
 //Check if Token is still valid, may call Refresh Token if needed
 async function CheckAccessToken()
 {
@@ -429,6 +447,14 @@ async function RefreshAccessToken(opt)
     .then(function (authResponse) {
       console.log(`\n The Refreshed Access Token is  ${JSON.stringify(authResponse.json)}`);
       OAUTH2_Token = JSON.stringify(authResponse.json, null, 2);
+
+      if(process.env.REFRESH_TOKEN != authResponse.json.refresh_token)
+        {
+          console.log('\n\n ***Refresh Token has changed*** \n\n');
+        }  
+        //update Refresh Token Variable
+        UpdateRefreshTokenBQ(authResponse.json.refresh_token);
+
     })
     .catch(function (e) {
       console.error(e);
@@ -441,6 +467,17 @@ async function RefreshAccessToken(opt)
   .refreshUsingToken(process.env.REFRESH_TOKEN)
   .then(function (authResponse) {
     console.log('Tokens refreshed : ' + JSON.stringify(authResponse.json));
+
+    
+    if(process.env.REFRESH_TOKEN != authResponse.json.refresh_token)
+    {
+      console.log('\n\n ***Refresh Token has changed*** \n\n');
+    }
+    //update Refresh Token Variable
+    UpdateRefreshTokenBQ(authResponse.json.refresh_token);
+
+    //Decrement Option
+    FirstRunOption--;
 
   })
   .catch(function (e) {
@@ -456,6 +493,47 @@ async function RefreshAccessToken(opt)
 
    
     
+}
+
+async function GetRefreshTokenBQ()
+{
+  // Define the query to fetch one column and one row
+  const query = `
+  SELECT Refresh_Token
+  FROM \`tableu-442921.IntuitKeys.IntuitKeys\`
+  LIMIT 1
+`;
+
+// Define the query options
+const options = {
+  query: query,
+  location: 'US', // Adjust to your dataset's location
+};
+
+try {
+  // Run the query
+  const [rows] = await BQ.query(options);
+
+  // Log the result (it will be an array of rows)
+  if (rows.length > 0) {
+    console.log('Result:', rows[0].Refresh_Token);
+    return rows[0].Refresh_Token;
+
+  } else {
+    console.log('No data found.');
+    return null;
+  }
+} catch (error) {
+  console.error('Error Fetching Token:', error);
+}
+}
+
+async function UpdateRefreshTokenBQ(Newtoken)
+{
+  await createTableBQ("IntuitKeys","IntuitKeys",TokenSchema);
+  await PushDataBQ("IntuitKeys","IntuitKeys",[{Refresh_Token: Newtoken}]);
+
+  process.env.REFRESH_TOKEN = Newtoken;
 }
   
 //Generic API Call Template
@@ -656,13 +734,13 @@ async function PushDataBQ(DataID,TabID,RowData)
   try{
     const options = {
       autodetect: true,
-      writeDisposition: 'WRITE_APPEND', // Appends data to the table
+      writeDisposition: 'WRITE_TRUNCATE', // Appends data to the table
     };
 
      // Load data directly from memory
      const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData,options);
 
-     console.log(`Data loaded into BigQuery. Job: ${job.id}`);
+     //console.log(`Data loaded into BigQuery. Job: ${job.id}`);
 
   } catch  (error)
   {
@@ -692,9 +770,9 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
     if (!datasetExists) {
       // Create a new dataset if it doesn't exist
       await BQ.createDataset(datasetId, { location: 'US' });
-      console.log(`Dataset ${datasetId} created.`);
+      //console.log(`Dataset ${datasetId} created.`);
     } else {
-      console.log(`Dataset ${datasetId} already exists.`);
+      //console.log(`Dataset ${datasetId} already exists.`);
     }
 
     // Reference the dataset
@@ -711,12 +789,12 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
         location: 'US',
       };
       const [table] = await dataset.createTable(tableId, options);
-      console.log(`Table ${table.id} created.`);
+      //console.log(`Table ${table.id} created.`);
     } else {
-      console.log(`Table ${tableId} already exists.`);
+      //console.log(`Table ${tableId} already exists.`);
     }
   } catch (err) {
-    console.error('Error creating or checking table:', err);
+    //console.error('Error creating or checking table:', err);
   }
 }
 
