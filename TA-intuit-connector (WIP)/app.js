@@ -25,7 +25,7 @@ const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  environment: 'sandbox',
+  environment: 'production',
   redirectUri: process.env.CLIENT_REDIRECT,
 
 });
@@ -69,8 +69,8 @@ const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
 let OAUTH2_Token = null;
 
 //Misc Dataset names, interchangeble
-let TokenDataSet = 'IntuitKeysSandbox';
-let ProfitLossDataSetName = 'ProfitLossSandbox';
+let TokenDataSet = 'IntuitKeys2';
+let ProfitLossDataSetName = 'ProfitLoss2';
 
 
 //Infer A Schema for a report
@@ -158,8 +158,8 @@ async function InferData(data,dataschema)
          //Check if Current Level is at bottom
          if (CurrentLevel.Rows.Row[0].ColData != undefined && CurrentLevel.Rows.Row[0].type == 'Data')
           {
-            console.log("Table Name Data:" + CurrentLevel.Header.ColData[0].value);
-            InferredTableNames.includes(CurrentLevel.Header.ColData[0].value) ? null:InferredTableNames.push(CurrentLevel.Header.ColData[0].value);
+            //console.log("Table Name Data:" + CurrentLevel.Header.ColData[0].value);
+            InferredTableNames.includes(CurrentLevel.Header.ColData[0].value) ? null:InferredTableNames.push(removeSpecialCharacters(CurrentLevel.Header.ColData[0].value));
             
             //Create Table
             let FullTable = [];
@@ -172,7 +172,7 @@ async function InferData(data,dataschema)
               //loop through each subportion
               for(let k = 0; k < CurrentLevel.Rows.Row[j].ColData.length; k++)
               {
-                console.log('value item: ' + CurrentLevel.Rows.Row[j].ColData[k].value);
+                //console.log('value item: ' + CurrentLevel.Rows.Row[j].ColData[k].value);
 
                 //Some tables have an "amount" object with no value, must check for that
                 if(dataschema[k].name == 'Amount' && CurrentLevel.Rows.Row[j].ColData[k].value == undefined || CurrentLevel.Rows.Row[j].ColData[k].value == "")
@@ -190,8 +190,8 @@ async function InferData(data,dataschema)
             }
 
             //Create Dataset and Table, push contents to BigQuery
-            //await createTableBQ(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
-            //await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
+            await createTableBQ(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
+            await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
 
           }
 
@@ -214,8 +214,18 @@ async function InferData(data,dataschema)
   return InferredTableNames;
 }
 
+app.get('/CreateTokenStore',async (req,res) => {
+  await createTokenTable();
+});
+
+app.get('/PushTokenStore',async (req,res) => {
+  await PushTokenBQ(process.env.REFRESH_TOKEN);
+});
+
 app.get('/Store-Keys',async (req,res) => {
-  await UpdateRefreshTokenBQ(process.env.REFRESH_TOKEN);
+  await createTokenTable();
+  await new Promise(resolve => setTimeout(resolve, 120000));
+  await PushTokenBQ(process.env.REFRESH_TOKEN);
 });
 
 //Webhook API Endpoint
@@ -299,7 +309,7 @@ async function RefreshAccessToken(opt)
           console.log('\n\n ***Refresh Token has changed*** \n\n');
         }  
         //update Refresh Token Variable
-        UpdateRefreshTokenBQ(authResponse.json.refresh_token);
+        PushTokenBQ(authResponse.json.refresh_token);
 
     })
     .catch(function (e) {
@@ -319,7 +329,7 @@ async function RefreshAccessToken(opt)
       console.log('\n\n ***Refresh Token has changed*** \n\n');
     }
     //update Refresh Token Variable
-    UpdateRefreshTokenBQ(authResponse.json.refresh_token);
+    PushTokenBQ(authResponse.json.refresh_token);
 
     //Decrement Option
     FirstRunOption--;
@@ -372,15 +382,14 @@ try {
 }
 }
 
-async function UpdateRefreshTokenBQ(Newtoken)
+async function createTokenTable()
 {
-  
-
   await createTableBQ(TokenDataSet,TokenDataSet,TokenSchema);
+}
 
+async function PushTokenBQ(Newtoken)
+{
   await PushDataBQ(TokenDataSet,TokenDataSet,[{Refresh_Token: Newtoken}]);
-
-
   process.env.REFRESH_TOKEN = Newtoken;
 }
   
@@ -524,7 +533,7 @@ async function PushDataBQ(DataID,TabID,RowData)
   try{
     const options = {
       autodetect: true,
-      writeDisposition: 'WRITE_APPEND', 
+      writeDisposition: 'WRITE_TRUNCATE', 
     };
 
      // Load data directly from memory
@@ -545,51 +554,7 @@ async function PushDataBQ(DataID,TabID,RowData)
     
 }
 
-async function truncateAndStream(datasetId, tableId, rows) {
-  
-  const writeClient = new BigQueryWriteClient();
 
-  try {
-      // 1. Truncate the table
-      const table = BQ.dataset(datasetId).table(tableId);
-      await table.delete({ force: true }); // Use force to delete even if table has data
-      console.log(`Table ${datasetId}.${tableId} truncated.`);
-
-      // 2. Configure the write stream (using proto definitions)
-      const protoDescriptor = await BQ.getTable(datasetId, tableId).getSchema();
-      const proto = google.protobuf.Type.fromDescriptor(protoDescriptor.toJSON());
-
-      const writeStream = writeClient.createWriteStream({
-          table: `projects/${BQ.projectId}/datasets/${datasetId}/tables/${tableId}`,
-          writeMode: 'STREAM_MODE_WRITE',
-      });
-
-      writeStream.on('error', (err) => {
-          console.error('Error in write stream:', err);
-          reject(err);
-      });
-
-      writeStream.on('finish', () => {
-          console.log('Streaming complete.');
-      });
-
-      // 3. Stream the data
-      for (const row of rows) {
-          const protoMessage = proto.fromObject(row);
-          writeStream.write({
-              serializedRows: {
-                  serializedRows: protoMessage.serialize(),
-              },
-          });
-      }
-      writeStream.end();
-      await new Promise((resolve) => writeStream.on('finish', resolve));
-
-  } catch (error) {
-      console.error('Error during truncate and stream:', error);
-      throw error;
-  }
-}
 
 //Push Data, below is a batch loading implementation
 async function PushDataBQBatch(DataID,TabID,Data)
@@ -675,16 +640,19 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
       const [table] = await dataset.createTable(tableId, options);
       console.log(`Table ${table.id} created.`);
     } else {
+ 
+      console.log(`Table ${tableId} already exists.`);
 
+      /*
       const table = dataset.table(tableId);
 
       await table.delete({ force: true }); // Use force to delete even if table has data
       console.log(`Table ${datasetId}.${tableId} truncated.`);
 
       await dataset.createTable(tableId, options);
-      console.log(`Table ${table.id} created.`);
-
-      console.log(`Table ${tableId} already exists.`);
+      console.log(`Table ${table.id} created after truncation `);
+      */
+      
     }
   } catch (err) {
     console.error('Error creating or checking table:', err);
@@ -730,7 +698,13 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}/Initiate-OAuth`);
   console.log('To get Profit and Loss data without OAuth using refresh tokens click on link below');
   console.log(`http://localhost:${PORT}/ProfitLoss`);
+  console.log('To Create Table for token');
+  console.log(`http://localhost:${PORT}/CreateTokenStore`);
   console.log('To Upload token stored on env file to BQ');
+  console.log(`http://localhost:${PORT}/PushTokenStore`);
+  console.log('Combined function from above (a little finicky)');
+  console.log(`http://localhost:${PORT}/Store-Keys`);
+  console.log('Used to Check Tokens and get New Tokens if needed');
   console.log(`http://localhost:${PORT}/Store-Keys`);
 
 });
