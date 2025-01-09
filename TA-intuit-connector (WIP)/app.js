@@ -1,6 +1,11 @@
 'use strict';
 //Requires for using Environment variables
 require('dotenv').config();
+const { Buffer } = require('buffer');
+const { Readable } = require('stream');
+const fs = require('fs'); // For Node.js
+
+const { BigQueryWriteClient } = require('@google-cloud/bigquery-storage');
 
 //Big query API requires
 const {BigQuery} = require('@google-cloud/bigquery');
@@ -20,7 +25,7 @@ const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  environment: 'production',
+  environment: 'sandbox',
   redirectUri: process.env.CLIENT_REDIRECT,
 
 });
@@ -40,9 +45,6 @@ const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
   projectId: 'tableu-442921', // Replace with your project ID
 })
-
-//Integer used to determine if OAuth or Refresh Token is used
-let FirstRunOption = 2;
 
 //Schemas
 const InvoiceSchema = [
@@ -65,6 +67,10 @@ const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
 
 //Instantiate Token to null 
 let OAUTH2_Token = null;
+
+//Misc Dataset names, interchangeble
+let TokenDataSet = 'IntuitKeysSandbox';
+let ProfitLossDataSetName = 'ProfitLossSandbox';
 
 
 //Infer A Schema for a report
@@ -168,15 +174,24 @@ async function InferData(data,dataschema)
               {
                 console.log('value item: ' + CurrentLevel.Rows.Row[j].ColData[k].value);
 
-                TableRow[dataschema[k].name] = CurrentLevel.Rows.Row[j].ColData[k].value;
+                //Some tables have an "amount" object with no value, must check for that
+                if(dataschema[k].name == 'Amount' && CurrentLevel.Rows.Row[j].ColData[k].value == undefined || CurrentLevel.Rows.Row[j].ColData[k].value == "")
+                {
+                  TableRow[dataschema[k].name] = null;
+                }
+                else
+                {
+                  TableRow[dataschema[k].name] = CurrentLevel.Rows.Row[j].ColData[k].value;
+                }
+                
               }
 
               FullTable.push(TableRow);
             }
 
             //Create Dataset and Table, push contents to BigQuery
-            //await createTableBQ("IntuitProfitLoss", removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
-            //await PushDataBQ("IntuitProfitLoss",removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
+            //await createTableBQ(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
+            //await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
 
           }
 
@@ -200,12 +215,8 @@ async function InferData(data,dataschema)
 }
 
 app.get('/Store-Keys',async (req,res) => {
-
+  await UpdateRefreshTokenBQ(process.env.REFRESH_TOKEN);
 });
-
-app.get('/Get-Stored-Keys',async(req, res) => {
-   
-})
 
 //Webhook API Endpoint
 app.post('/TA-Intuit',(req,res) => {
@@ -222,14 +233,12 @@ app.post('/TA-Intuit',(req,res) => {
 //Endpoint for Reporting Profit and Loss
 app.get('/ProfitLoss',async(req, res) => {
 
-  process.env.REFRESH_TOKEN = await GetRefreshTokenBQ();
   console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
   console.log("RealmID is: " + process.env.REALM_ID);
   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
   console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
-
-  let Data = await getProfitLossDetailData("This Fiscal Year-to-date","sort_by=Date");
+  let Data = await getProfitLossDetailData("Last Fiscal Year","sort_by=Date");
 
   let Schema = await InferSchemaReport(Data);
 
@@ -252,174 +261,11 @@ setInterval(CheckAccessToken, 65 * 60 * 1000);
 console.log('Refresh Access Token Timer Started')
 });
 
-
-//General functions for testing GET requests provided by Intuit API
-app.get('/Start',async(req, res) => {
-   //Check Token and IDs
-   console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
-   console.log("RealmID is: " + process.env.REALM_ID);
-   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
-   console.log("The refresh token is " + process.env.REFRESH_TOKEN );
-
-   let ResData = "";
-
-   let Data = await GetInvoiceData();
-  
-   console.log("\n\nInvoice Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nInvoice Data:\n" + PrettyPrint(Data);
-
-   Data = await GetAccountData();
-   console.log("\n\nAccount Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nAccount Data:\n" + PrettyPrint(Data);
-
-   Data = await GetBillData();
-   console.log("\n\nBill Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nBill Data:\n" + PrettyPrint(Data);
-
-   Data = await GetCompanyData();
-   console.log("\n\nCompany Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nCompany Data:\n" + PrettyPrint(Data);
-
-   Data = await GetCustomerData();
-   console.log("\n\nCustomer Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nCustomer Data:\n" + PrettyPrint(Data);
-
-   Data = await GetEmployeeData();
-   console.log("\n\nEmployee Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nEmployee Data:\n" + PrettyPrint(Data);
-
-   Data = await GetEstimateData();
-   console.log("\n\nEstimate Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nEstimate Data:\n" + PrettyPrint(Data);
-   
-   Data = await GetItemData();
-   console.log("\n\nItem Data:\n" + PrettyPrint(Data)); 
-   ResData += "\n\nItem Data:\n" + PrettyPrint(Data);
-
-   Data = await GetPaymentData();
-   console.log("\n\nPayment Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nPayment Data:\n" + PrettyPrint(Data);
-
-   Data = await getTaxAgencyData();
-   console.log("\n\nTax Agency Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nTax Agency Data:\n" + PrettyPrint(Data);
-
-   Data = await getVendorData();
-   console.log("\n\nVendor Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nVendor Data:\n" + PrettyPrint(Data);
-
-   Data = await GetAccountListData();
-   console.log("\n\nAccount List Data:\n" + PrettyPrint(Data));
-   ResData += "\n\nAccount List Data:\n" + PrettyPrint(Data);
-
-   //Unfunctionized code, will be used in future versions
-   
-  //NOTE: All Reports have customizable queries that we will need to discuss
-  // ************************************************************************** 
-  //Query AccountListDetail Report
-  ResData += ("\n\nAccountListDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AccountList?columns=account_name,account_type&account_type=Income&minorversion=73")));
-
-  //Query APAgingDetail Report
-   ResData += ("\n\nAPAgingDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedPayableDetail?report_date=2015-06-30&start_duedate=2015-01-01&end_duedate=2015-06-30&columns=due_date,vend_name&minorversion=73")));
-
-  //Query APAgingSummary Report
-   ResData += ("\n\nAPAgingSummary:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedPayables?date_macro=Today&minorversion=73")));
-
-  //Query ARAgingDetail Report
-   ResData += ("\n\nARAgingDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedReceivableDetail?report_date=2015-06-30&start_duedate=2015-01-01&end_duedate=2015-06-30&columns=due_date,cust_name&minorversion=73")));
-
-   //Query ARAgingSummary Report
-   ResData += ("\n\nARAgingSummary:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/AgedReceivables?customer=4&date_macro=Last Fiscal Year&minorversion=73")));
-
-   //Query Attachable Object
-   ResData += ("\n\nAttachable:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from attachable&minorversion=73")));
-
-   //Query BalanceSheet Report
-   ResData += ("\n\nBalanceSheet:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/BalanceSheet?date_macro=Last Fiscal Year-to-date&minorversion=73")));
-
-   //Query Bill Object
-   ResData += ("\n\nBill:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from bill&minorversion=73")));
-
-   //Query BillPayment Object
-   ResData += ("\n\nBillPayment:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from billpayment&minorversion=73")));
-
-   //Query budget Object
-   ResData += ("\n\nbudget:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=Select * from Budget&minorversion=73")));
-
-   //Query CashFlow Object
-   ResData += ("\n\nCashFlow:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CashFlow?minorversion=73")));
-
-   //Query ChangedDataCapture Report
-   //Queries for changed data from a certain date
-   //will need to be customized
-   ResData += ("\n\nChangedDataCapture:\n" + PrettyPrint(await GetAPICall(url,companyID,"cdc?entities=Customer,Estimate&changedSince=2015-11-28&minorversion=73")));
-
-   //Queries Class Object
-   ResData += ("\n\nClass:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select  * from Class&minorversion=73")));
-
-   //Query CompanyCurrency Object
-   ResData += ("\n\nCompanyCurrency:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from companycurrency&minorversion=73")));
-
-   //Query Credit Memo Object
-   ResData += ("\n\nCreditMemo:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=Select * from CreditMemo&minorversion=73")));
-
-   //Query CreditCardPayment Object
-   ResData += ("\n\nCreditCardPayment:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from creditcardpayment&minorversion=73")));
-
-   // Query CustomerBalance Report
-   ResData += ("\n\nCustomerBalance:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerBalance?customer=1&minorversion=73")));
-
-   //Query CustomerBalance Detail Report
-   ResData += ("\n\nCustomerBalanceDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerBalanceDetail?customer=1&start_duedate=2015-08-01&end_duedate=2015-09-30&columns=subt_amount,tx_date&minorversion=73")));
-
-   //Query Customer Income Report
-   ResData += ("\n\nCustomerIncome:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerIncome?customer=1&minorversion=73")));
-
-   //Query Department Object
-   ResData += ("\n\nDepartment:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from Department&minorversion=73")));
-
-   //Query Deposit Object
-   ResData += ("\n\nDeposit:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from Deposit&minorversion=73")));
-
-   //Query General Ledger Report
-   ResData += ("\n\nGeneralLedgerReport:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/GeneralLedger?start_date=2015-01-01&end_date=2015-06-30&columns=account_name,subt_nat_amount&source_account_type=Bank&minorversion=73")));
-
-   //Query JournalEntry Object
-   ResData += ("\n\nJournalEntry:\n" + PrettyPrint(await GetAPICall(url,companyID,"query?query=select * from JournalEntry&minorversion=73")));
-
-   //Query Journal Report
-   ResData += ("\n\nJournalReport:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/JournalReport?minorversion=73")));
-
-   //Query Profit and Loss Detail Report
-   ResData += ("\n\nProfitAndLossDetail:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/ProfitAndLossDetail?start_date=2015-06-01&end_date=2015-06-30&customer=3&columns=tx_date%252Cname%252Csubt_nat_amount&minorversion=73")));
-
-   //Sales by Class Summary Report
-   ResData += ("\n\nClass Summary:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/ClassSales?class=2&minorversion=73")));
-
-   //Sales by Customer Report
-   ResData += ("\n\nCustomer Sales:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/CustomerSales?customer=1&start_date=2015-08-01&end_date=2015-09-30&minorversion=73")));
-
-   //Sales by Department Report
-   ResData += ("\n\nDepartment Sales:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/DepartmentSales?start_date=2015-08-01&end_date=2015-09-30&minorversion=73")));
-
-   //Sales by Product Report
-   ResData += ("\n\nProduct Sales:\n" + PrettyPrint(await GetAPICall(url,companyID,"reports/ItemSales?start_duedate=2015-08-01&end_duedate=2015-09-30&minorversion=73")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   ResData += ("\n\nPLaceholder:\n" + PrettyPrint(await GetAPICall(url,companyID,"")));
-
-   res.send("Test Page Send for Refresh Token Accessed, displaying data in console log, and sending response\n\n" + ResData);
-
-   //push Data to big query
-   //await PushInvoiceData(Data);
-})
- 
 //Check if Token is still valid, may call Refresh Token if needed
 async function CheckAccessToken()
 {
+   process.env.REFRESH_TOKEN = await GetRefreshTokenBQ();
+
    if( oauthClient.isAccessTokenValid())
    {
     console.log('access token is good, can fetch data');
@@ -468,7 +314,6 @@ async function RefreshAccessToken(opt)
   .then(function (authResponse) {
     console.log('Tokens refreshed : ' + JSON.stringify(authResponse.json));
 
-    
     if(process.env.REFRESH_TOKEN != authResponse.json.refresh_token)
     {
       console.log('\n\n ***Refresh Token has changed*** \n\n');
@@ -495,13 +340,12 @@ async function RefreshAccessToken(opt)
     
 }
 
-async function GetRefreshTokenBQ()
+async function GetRefreshTokenBQ(TargetTable)
 {
   // Define the query to fetch one column and one row
   const query = `
   SELECT Refresh_Token
-  FROM \`tableu-442921.IntuitKeys.IntuitKeys\`
-  LIMIT 1
+  FROM \`tableu-442921.${TokenDataSet}.${TokenDataSet}\`
 `;
 
 // Define the query options
@@ -516,8 +360,8 @@ try {
 
   // Log the result (it will be an array of rows)
   if (rows.length > 0) {
-    console.log('Result:', rows[0].Refresh_Token);
-    return rows[0].Refresh_Token;
+    console.log('Result:', rows[rows.length-1].Refresh_Token);
+    return rows[rows.length-1].Refresh_Token;
 
   } else {
     console.log('No data found.');
@@ -530,8 +374,12 @@ try {
 
 async function UpdateRefreshTokenBQ(Newtoken)
 {
-  await createTableBQ("IntuitKeys","IntuitKeys",TokenSchema);
-  await PushDataBQ("IntuitKeys","IntuitKeys",[{Refresh_Token: Newtoken}]);
+  
+
+  await createTableBQ(TokenDataSet,TokenDataSet,TokenSchema);
+
+  await PushDataBQ(TokenDataSet,TokenDataSet,[{Refresh_Token: Newtoken}]);
+
 
   process.env.REFRESH_TOKEN = Newtoken;
 }
@@ -582,60 +430,6 @@ async function GetInvoiceData()
    return await GetAPICall(url,companyID,"query?query=select * from Invoice&minorversion=73");   
 }
 
-//Account Object
-async function GetAccountData()
-{
-  return  await GetAPICall(url,companyID,"query?query=select * from Account&minorversion=73");
-}
-
-//Get Account List Detail
-async function GetAccountListData()
-{
-  return  await GetAPICall(url,companyID,"reports/AccountList?columns=account_name,account_type&account_type=Income&minorversion=73");
-}
-
-//Bill Object
-async function GetBillData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from bill&minorversion=73");
-}
-
-//Get CompanyInfo Object
-async function GetCompanyData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from CompanyInfo&minorversion=73");
-}
-
-//Get Customer Object
-async function GetCustomerData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
-}
-
-//Get Employee Object
-async function GetEmployeeData()
-{
-  return  await GetAPICall(url,companyID,"query?query=select * from Employee&minorversion=73");
-}
-
-//Get Estimate Object
-async function GetEstimateData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from estimate&minorversion=73");
-}
-
-//get Item Object
-async function GetItemData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from Item&minorversion=73");
-}
-
-//Get Payment Object
-async function GetPaymentData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from Payment&minorversion=73");
-}
-
 //This may need to be refactored to inlcude date range
 // please do not use this in the meanwhile
 async function GetProfitLossData()
@@ -669,16 +463,6 @@ async function getProfitLossDetailData(date_macro,options)
   
 } 
 
-async function getTaxAgencyData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from TaxAgency&minorversion=73");
-}
-
-async function getVendorData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from vendor&minorversion=73");
-}
-
 async function PushInvoiceData(InvoiceData)
 {
   if(InvoiceData)
@@ -694,6 +478,11 @@ async function PushInvoiceData(InvoiceData)
   
 }
 
+async function ManualTruncate(DataID,TabID)
+{
+  // Truncate the table
+  await BQ.query(`TRUNCATE TABLE \`${DataID}.${TabID}\``);
+}
 
 //Transform Data from API call into one that fits Schema(used for streaming data inserts)
 async function TransformJSONInvoice(Data)
@@ -728,19 +517,20 @@ async function TransformJSONInvoice(Data)
 }
 
 //Google Big Query Functions Below
-//Push Data onto Google Big Query
+//Push Data onto Google Big Query, below is a streaming insert implementation
 async function PushDataBQ(DataID,TabID,RowData)
 {
+ 
   try{
     const options = {
       autodetect: true,
-      writeDisposition: 'WRITE_TRUNCATE', // Appends data to the table
+      writeDisposition: 'WRITE_APPEND', 
     };
 
      // Load data directly from memory
      const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData,options);
 
-     //console.log(`Data loaded into BigQuery. Job: ${job.id}`);
+     console.log(`Data loaded into BigQuery. Job: ${job.id}`);
 
   } catch  (error)
   {
@@ -753,6 +543,96 @@ async function PushDataBQ(DataID,TabID,RowData)
 
   }
     
+}
+
+async function truncateAndStream(datasetId, tableId, rows) {
+  
+  const writeClient = new BigQueryWriteClient();
+
+  try {
+      // 1. Truncate the table
+      const table = BQ.dataset(datasetId).table(tableId);
+      await table.delete({ force: true }); // Use force to delete even if table has data
+      console.log(`Table ${datasetId}.${tableId} truncated.`);
+
+      // 2. Configure the write stream (using proto definitions)
+      const protoDescriptor = await BQ.getTable(datasetId, tableId).getSchema();
+      const proto = google.protobuf.Type.fromDescriptor(protoDescriptor.toJSON());
+
+      const writeStream = writeClient.createWriteStream({
+          table: `projects/${BQ.projectId}/datasets/${datasetId}/tables/${tableId}`,
+          writeMode: 'STREAM_MODE_WRITE',
+      });
+
+      writeStream.on('error', (err) => {
+          console.error('Error in write stream:', err);
+          reject(err);
+      });
+
+      writeStream.on('finish', () => {
+          console.log('Streaming complete.');
+      });
+
+      // 3. Stream the data
+      for (const row of rows) {
+          const protoMessage = proto.fromObject(row);
+          writeStream.write({
+              serializedRows: {
+                  serializedRows: protoMessage.serialize(),
+              },
+          });
+      }
+      writeStream.end();
+      await new Promise((resolve) => writeStream.on('finish', resolve));
+
+  } catch (error) {
+      console.error('Error during truncate and stream:', error);
+      throw error;
+  }
+}
+
+//Push Data, below is a batch loading implementation
+async function PushDataBQBatch(DataID,TabID,Data)
+{
+  
+  try {
+    const options = {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON', // Specify data format
+      writeDisposition: 'WRITE_TRUNCATE',    // Overwrite the table
+      autodetect: true,                      // Let BigQuery detect the schema
+    };
+
+    // Create a Buffer from the newline-delimited JSON string
+    const dataString = Data.map(row => JSON.stringify(row)).join('\n');
+    const dataBuffer = Buffer.from(dataString, 'utf-8'); // Crucial change
+    //const dataBuffer = Readable.from(dataString);
+    // Create a readable stream from the string
+    const stream = new Readable({
+      read() {
+        this.push(dataString); 
+        this.push(null); // Signal end-of-stream
+      }
+    });
+   
+
+    const [job] = await BQ.dataset(DataID).table(TabID).load(stream, options); // Pass the Buffer
+
+
+    console.log(`Job ${job.id} completed.`);
+    console.log('Batch load successful.');
+  } catch (error) {
+    console.error('Error loading data into BigQuery:', error);
+
+    // Handle individual row errors, if any
+    if (error.errors) {
+      error.errors.forEach(err => {
+        console.error('Row-level error:', JSON.stringify(err));
+      });
+    }
+  }
+    
+
+  
 }
 
 //Creates BQ Table function (General)
@@ -770,9 +650,10 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
     if (!datasetExists) {
       // Create a new dataset if it doesn't exist
       await BQ.createDataset(datasetId, { location: 'US' });
-      //console.log(`Dataset ${datasetId} created.`);
+      console.log(`Dataset ${datasetId} created.`);
     } else {
-      //console.log(`Dataset ${datasetId} already exists.`);
+
+      console.log(`Dataset ${datasetId} already exists.`);
     }
 
     // Reference the dataset
@@ -782,23 +663,63 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
     const [tables] = await dataset.getTables();
     const tableExists = tables.some(table => table.id === tableId);
 
+    const options = {
+      schema: schemaprofile,
+      location: 'US',
+    };
+
+  
     if (!tableExists) {
       // Create the table if it doesn't exist
-      const options = {
-        schema: schemaprofile,
-        location: 'US',
-      };
+      
       const [table] = await dataset.createTable(tableId, options);
-      //console.log(`Table ${table.id} created.`);
+      console.log(`Table ${table.id} created.`);
     } else {
-      //console.log(`Table ${tableId} already exists.`);
+
+      const table = dataset.table(tableId);
+
+      await table.delete({ force: true }); // Use force to delete even if table has data
+      console.log(`Table ${datasetId}.${tableId} truncated.`);
+
+      await dataset.createTable(tableId, options);
+      console.log(`Table ${table.id} created.`);
+
+      console.log(`Table ${tableId} already exists.`);
     }
   } catch (err) {
-    //console.error('Error creating or checking table:', err);
+    console.error('Error creating or checking table:', err);
   }
 }
 
+//Create Data Buffer using provided Schema and Data Structure
+async function CreateDataBufferString(TransformedData, Schema) {
+  let BufferString = '';
 
+  for (let i = 0; i < TransformedData.length; i++) {
+    // Open bracket
+    BufferString += '{';
+
+    // Loop through each Schema field
+    for (let j = 0; j < Schema.length; j++) {
+      const fieldName = Schema[j].name;
+      const fieldValue = TransformedData[i][fieldName];
+
+      // Add key and value, handling string values
+      BufferString += `"${fieldName}":`;
+      BufferString += typeof fieldValue === 'string' ? `"${fieldValue}"` : fieldValue;
+
+      // Add comma if not the last field
+      if (j !== Schema.length - 1) {
+        BufferString += ',';
+      }
+    }
+
+    // Close bracket and add newline
+    BufferString += '}\n';
+  }
+
+  return BufferString;
+}
 
 let PORT = 3000;
 //Listen for request on logs to vs
@@ -809,8 +730,10 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}/Initiate-OAuth`);
   console.log('To get Profit and Loss data without OAuth using refresh tokens click on link below');
   console.log(`http://localhost:${PORT}/ProfitLoss`);
-});
+  console.log('To Upload token stored on env file to BQ');
+  console.log(`http://localhost:${PORT}/Store-Keys`);
 
+});
 
 /* 
 Below 3 functions are for OAuth Purposes for obtaining Tokens, may not be used anymore in favor of refresh tokens
@@ -868,7 +791,12 @@ setInterval(GetInvoiceData,60 * 60 * 1000);
 ******************************************************************
 */
 
+//General functions for testing GET requests provided by Intuit API
+app.get('/Start',async(req, res) => {
+  //Check Token and IDs
+  console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
+  console.log("RealmID is: " + process.env.REALM_ID);
+  console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
+  console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
-
-
-
+})
