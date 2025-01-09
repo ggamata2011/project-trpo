@@ -5,7 +5,7 @@ const { Buffer } = require('buffer');
 const { Readable } = require('stream');
 const fs = require('fs'); // For Node.js
 
-const { BigQueryWriteClient } = require('@google-cloud/bigquery-storage');
+
 
 //Big query API requires
 const {BigQuery} = require('@google-cloud/bigquery');
