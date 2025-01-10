@@ -13,6 +13,8 @@ const {BigQuery} = require('@google-cloud/bigquery');
 var express = require('express');
 var app = express();
 
+
+
 //Body-parser used for parsing and organizing request data 
 const bodyParser = require('body-parser');
 app.use(bodyParser.json());
@@ -25,7 +27,7 @@ const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  environment: 'production',
+  environment: 'sandbox',
   redirectUri: process.env.CLIENT_REDIRECT,
 
 });
@@ -40,6 +42,8 @@ const authURI = oauthClient.authorizeUri({
 const companyID = process.env.REALM_ID != '' ? process.env.REALM_ID : oauthClient.getToken().realmId;
 //Check oauthEnvironment
 const url = oauthClient.environment == 'sandbox' ? OAuthClient.environment.sandbox : OAuthClient.environment.production;
+
+let FirstRunOption = 2;
 
 const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
@@ -69,8 +73,8 @@ const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
 let OAUTH2_Token = null;
 
 //Misc Dataset names, interchangeble
-let TokenDataSet = 'IntuitKeys2';
-let ProfitLossDataSetName = 'ProfitLoss2';
+let TokenDataSet = 'IntuitKeysSandbox';
+let ProfitLossDataSetName = 'ProfitLossSandBox';
 
 
 //Infer A Schema for a report
@@ -89,7 +93,13 @@ async function InferSchemaReport(data)
 
 function removeSpecialCharacters(input) {
   // Replace all non-alphanumeric characters with a blank space
-  return input.replace(/[^a-zA-Z0-9 ]/g, '');
+  if(input !== undefined && input !== null && input != '')
+  {
+    return input.replace(/[^a-zA-Z0-9 ]/g, '');
+  }
+
+  return '';
+  
 }
 
 //Resolves Type to their appropriate BQ Type
@@ -191,8 +201,18 @@ async function InferData(data,dataschema)
 
             //Create Dataset and Table, push contents to BigQuery
             await createTableBQ(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
-            await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
 
+            await ManualTruncate(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value));
+
+             await PushDataBQManual(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema, FullTable);
+            //await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
+
+            /*
+            for(let i =0; i < FullTable.length; i++)
+            {
+              await PushDataBQManualSingle(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),dataschema,FullTable[i]);
+            }
+            */
           }
 
 
@@ -214,17 +234,11 @@ async function InferData(data,dataschema)
   return InferredTableNames;
 }
 
-app.get('/CreateTokenStore',async (req,res) => {
-  await createTokenTable();
-});
 
-app.get('/PushTokenStore',async (req,res) => {
-  await PushTokenBQ(process.env.REFRESH_TOKEN);
-});
 
 app.get('/Store-Keys',async (req,res) => {
+
   await createTokenTable();
-  await new Promise(resolve => setTimeout(resolve, 120000));
   await PushTokenBQ(process.env.REFRESH_TOKEN);
 });
 
@@ -389,7 +403,8 @@ async function createTokenTable()
 
 async function PushTokenBQ(Newtoken)
 {
-  await PushDataBQ(TokenDataSet,TokenDataSet,[{Refresh_Token: Newtoken}]);
+  await ManualTruncate(TokenDataSet,TokenDataSet);
+  await PushDataBQManualSingle(TokenDataSet,TokenDataSet,TokenSchema,{Refresh_Token: Newtoken});
   process.env.REFRESH_TOKEN = Newtoken;
 }
   
@@ -487,6 +502,8 @@ async function PushInvoiceData(InvoiceData)
   
 }
 
+//Code to manually truncate table
+//DO NOT USE WITH STREAMING INSERTS
 async function ManualTruncate(DataID,TabID)
 {
   // Truncate the table
@@ -554,6 +571,92 @@ async function PushDataBQ(DataID,TabID,RowData)
     
 }
 
+async function ManualTruncate(DataID,TabID)
+{
+  // Truncate the table
+  await BQ.query(`TRUNCATE TABLE \`${DataID}.${TabID}\``);
+  console.log("Table Truncated");
+}
+
+//Alternative push data to BQ, creates a manual query string
+async function PushDataBQManual(datasetId, tableId, schema, rows) {
+  try {
+    // Step 1: Construct the INSERT query for multiple rows
+    //const columns = schema.map(field => field.name).join(', ');
+    const columns = schema.map(field => `\`${field.name}\``).join(', '); // Wrap column names in backticks
+
+    // Generate values for each row
+    const valuesArray = rows.map(row => {
+      const values = schema
+        .map(field => {
+          const value = row[field.name];
+          // Dynamically format values based on their type
+        if (field.type === 'STRING') {
+          //return `'${value.replace(/'/g, "\\'")}'`; // Escape single quotes for SQL
+          return `'${removeSpecialCharacters(value)}'`;
+        }  else if (field.type === 'DATE') {
+          return `'${value}'`; // Dates should be passed as strings
+        } else if (field.type === 'NUMERIC' || field.type === 'FLOAT' || field.type === 'INTEGER') {
+          return value; // Pass numeric values as-is
+        } else if (value === null || value === undefined) {
+          return 'NULL';
+        } else {
+          return value;
+        }
+
+
+        })
+        .join(', ');
+      return `(${values})`;
+    });
+
+    const valuesString = valuesArray.join(',\n'); // Combine rows into one query
+    const insertQuery = `INSERT INTO \`${datasetId}.${tableId}\` (${columns}) VALUES ${valuesString}`;
+
+    // Step 2: Execute the query
+    console.log(`Executing query: ${insertQuery}`);
+    await BQ.query(insertQuery);
+    console.log('Rows inserted successfully.');
+  } catch (error) {
+    console.error('Error during insertion:', error);
+  }
+}
+
+//Other Alternative to push, pushes a single row to manual query string
+async function PushDataBQManualSingle(datasetId, tableId, schema, row) {
+  try {
+    // Step 1: Construct the INSERT query
+    const columns = schema.map(field => `\`${field.name}\``).join(', '); // Wrap column names in backticks
+    //const columns = schema.map(field => field.name).join(', ');
+    const values = schema
+      .map(field => {
+        const value = row[field.name];
+        // Dynamically format values based on their type
+        if (field.type === 'STRING') {
+          //return `'${value.replace(/'/g, "\\'")}'`; // Escape single quotes for SQL
+          return `'${removeSpecialCharacters(value)}'`;
+        }  else if (field.type === 'DATE') {
+          return `'${value}'`; // Dates should be passed as strings
+        } else if (field.type === 'NUMERIC' || field.type === 'FLOAT' || field.type === 'INTEGER') {
+          return value; // Pass numeric values as-is
+        } else if (value === null || value === undefined) {
+          return 'NULL';
+        } else {
+          return value;
+        }
+      })
+      .join(', ');
+
+    const insertQuery = `INSERT INTO \`${datasetId}.${tableId}\` (${columns}) VALUES (${values})`;
+
+    // Step 2: Execute the query
+    console.log(`Executing query: ${insertQuery}`);
+    await BQ.query(insertQuery);
+    console.log('Row inserted successfully.');
+  } catch (error) {
+    console.error('Error during insertion:', error);
+  }
+}
 
 
 //Push Data, below is a batch loading implementation
@@ -579,9 +682,7 @@ async function PushDataBQBatch(DataID,TabID,Data)
       }
     });
    
-
     const [job] = await BQ.dataset(DataID).table(TabID).load(stream, options); // Pass the Buffer
-
 
     console.log(`Job ${job.id} completed.`);
     console.log('Batch load successful.');
@@ -643,50 +744,10 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
  
       console.log(`Table ${tableId} already exists.`);
 
-      /*
-      const table = dataset.table(tableId);
-
-      await table.delete({ force: true }); // Use force to delete even if table has data
-      console.log(`Table ${datasetId}.${tableId} truncated.`);
-
-      await dataset.createTable(tableId, options);
-      console.log(`Table ${table.id} created after truncation `);
-      */
-      
     }
   } catch (err) {
     console.error('Error creating or checking table:', err);
   }
-}
-
-//Create Data Buffer using provided Schema and Data Structure
-async function CreateDataBufferString(TransformedData, Schema) {
-  let BufferString = '';
-
-  for (let i = 0; i < TransformedData.length; i++) {
-    // Open bracket
-    BufferString += '{';
-
-    // Loop through each Schema field
-    for (let j = 0; j < Schema.length; j++) {
-      const fieldName = Schema[j].name;
-      const fieldValue = TransformedData[i][fieldName];
-
-      // Add key and value, handling string values
-      BufferString += `"${fieldName}":`;
-      BufferString += typeof fieldValue === 'string' ? `"${fieldValue}"` : fieldValue;
-
-      // Add comma if not the last field
-      if (j !== Schema.length - 1) {
-        BufferString += ',';
-      }
-    }
-
-    // Close bracket and add newline
-    BufferString += '}\n';
-  }
-
-  return BufferString;
 }
 
 let PORT = 3000;
