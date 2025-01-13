@@ -5,15 +5,11 @@ const { Buffer } = require('buffer');
 const { Readable } = require('stream');
 const fs = require('fs'); // For Node.js
 
-
-
 //Big query API requires
 const {BigQuery} = require('@google-cloud/bigquery');
 //Instantiate App with express
 var express = require('express');
 var app = express();
-
-
 
 //Body-parser used for parsing and organizing request data 
 const bodyParser = require('body-parser');
@@ -42,7 +38,6 @@ const authURI = oauthClient.authorizeUri({
 const companyID = process.env.REALM_ID != '' ? process.env.REALM_ID : oauthClient.getToken().realmId;
 //Check oauthEnvironment
 const url = oauthClient.environment == 'sandbox' ? OAuthClient.environment.sandbox : OAuthClient.environment.production;
-
 
 const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
@@ -75,7 +70,6 @@ let OAUTH2_Token = null;
 let TokenDataSet = 'IntuitKeysSandbox';
 let ProfitLossDataSetName = 'ProfitLossSandBox';
 
-
 //Infer A Schema for a report
 async function InferSchemaReport(data)
 {
@@ -90,6 +84,7 @@ async function InferSchemaReport(data)
   return InferredSchema;
 }
 
+//Used for abiding to BQ Naming Standards
 function removeSpecialCharacters(input) {
   // Replace all non-alphanumeric characters with a blank space
   if(input !== undefined && input !== null && input != '')
@@ -101,6 +96,7 @@ function removeSpecialCharacters(input) {
   
 }
 
+//Used for abiding to BQ Naming Standards
 function replaceWhitespaceWithUnderscores(input) {
   // Ensure the input is a valid string
   if (typeof input !== 'string') {
@@ -110,7 +106,7 @@ function replaceWhitespaceWithUnderscores(input) {
   return input.replace(/\s+/g, '_');
 }
 
-//Resolves Type to their appropriate BQ Type
+//Resolves Type to their appropriate BQ Type for schema creation
 function ResolveBQType(type)
 {
   //May add more as we come across more data
@@ -296,6 +292,7 @@ async function GetProfitLossWrapper()
     }  
   }
 
+  console.log("Get Profit Loss Wrapper Completed");
 }
 
 //Check if Token is still valid, may call Refresh Token if needed
