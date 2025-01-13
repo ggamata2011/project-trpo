@@ -241,20 +241,18 @@ async function GetCustomerData()
   return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
 }
 
-
-
 app.get('/Store-Keys',async (req,res) => {
 
   await PushTokenBQ(process.env.REFRESH_TOKEN);
 });
 
 //Webhook API Endpoint
-app.post('/TA-Intuit',(req,res) => {
+app.post('/TA-Intuit',async(req,res) => {
 
  console.log('Received Request:' + JSON.stringify(req.body));
  
- //Some Logic to pull Invoice data or possibly a switch for other types of data
- //GetInvoiceData();
+ await GetProfitLossWrapper(); 
+
  // Send a response
  res.status(200).send('Webhook received successfully');
    
@@ -268,30 +266,8 @@ app.get('/ProfitLoss',async(req, res) => {
   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
   console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
-
-  let Customers = await GetCustomerData();
-  let CustomerNames = await GetCustomers(Customers);
-
-  
-  for(let i = 0; i < CustomerNames.length; i++)
-  {
-    let Data = await getProfitLossDetailData(`Last Fiscal Year&customer=${CustomerNames[i].CustomerID}`,"sort_by=Date");
-
-    //&& Data.Rows.constructor === Object
-    if(Object.keys(Data.Rows).length !== 0 )
-    {
-
-      let Schema = await InferSchemaReport(Data);
-      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_PNL_Sandbox");
-
-    }
-
-    
-  }
-  
-  
-  //InferData(Data,Schema);
-
+  await GetProfitLossWrapper();
+ 
   res.send("OK! Check Console");
 });
 
@@ -302,6 +278,25 @@ app.get('/StartRefreshTimers',(req,res) =>{
 setInterval(CheckAccessToken, 65 * 60 * 1000);
 console.log('Refresh Access Token Timer Started')
 });
+
+async function GetProfitLossWrapper()
+{
+  let Customers = await GetCustomerData();
+  let CustomerNames = await GetCustomers(Customers);
+
+  for(let i = 0; i < CustomerNames.length; i++)
+  {
+    let Data = await getProfitLossDetailData(`Last Fiscal Year&customer=${CustomerNames[i].CustomerID}`,"sort_by=Date");
+    //&& Data.Rows.constructor === Object
+    if(Object.keys(Data.Rows).length !== 0 )
+    {
+      let Schema = await InferSchemaReport(Data);
+      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_PNL_Sandbox");
+
+    }  
+  }
+
+}
 
 //Check if Token is still valid, may call Refresh Token if needed
 async function CheckAccessToken()
@@ -324,13 +319,6 @@ async function CheckAccessToken()
 
    return oauthClient.isAccessTokenValid();
 
-}
-
-
-//Gets Projects only on Customer API, should  return array of objects
-async function GetProjects(Data)
-{
-  
 }
 
 //Gets Customers that are not projects, should return an array of objects
@@ -826,8 +814,6 @@ console.log('Refresh Access Token Timer Started')
 
 //Set Interval for Getting Invoice Data
 setInterval(GetInvoiceData,60 * 60 * 1000);
-
-
 }
 /* 
 ******************************************************************
