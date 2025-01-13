@@ -43,7 +43,6 @@ const companyID = process.env.REALM_ID != '' ? process.env.REALM_ID : oauthClien
 //Check oauthEnvironment
 const url = oauthClient.environment == 'sandbox' ? OAuthClient.environment.sandbox : OAuthClient.environment.production;
 
-let FirstRunOption = 2;
 
 const BQ = new BigQuery({
   keyFilename: 'tableu-442921-272d860b3fc9.json',
@@ -102,6 +101,15 @@ function removeSpecialCharacters(input) {
   
 }
 
+function replaceWhitespaceWithUnderscores(input) {
+  // Ensure the input is a valid string
+  if (typeof input !== 'string') {
+    return '';
+  }
+  // Replace all whitespace characters with underscores
+  return input.replace(/\s+/g, '_');
+}
+
 //Resolves Type to their appropriate BQ Type
 function ResolveBQType(type)
 {
@@ -124,7 +132,7 @@ function ResolveBQType(type)
 }
 
 //Used to create Separate BQ Tables for Reports
-async function InferData(data,dataschema)
+async function InferData(data,dataschema,DatasetName)
 {
   // Holds Table names
    let InferredTableNames = [];
@@ -132,6 +140,8 @@ async function InferData(data,dataschema)
    let TreeStack = [];
    //Second Stack to keep of order
    let MemoryStack = [];
+
+   let DataSetName;
 
    //Get Top Level Column Names and Data Types
   for(let i = 0; i < data.Rows.Row.length; i++)
@@ -200,19 +210,10 @@ async function InferData(data,dataschema)
             }
 
             //Create Dataset and Table, push contents to BigQuery
-            await createTableBQ(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
-
-            await ManualTruncate(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value));
-
-             await PushDataBQManual(ProfitLossDataSetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema, FullTable);
+            await createTableBQ(DatasetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
+            await ManualTruncate(DatasetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value));
+            await PushDataBQManual(DatasetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema, FullTable);
             //await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
-
-            /*
-            for(let i =0; i < FullTable.length; i++)
-            {
-              await PushDataBQManualSingle(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),dataschema,FullTable[i]);
-            }
-            */
           }
 
 
@@ -234,11 +235,16 @@ async function InferData(data,dataschema)
   return InferredTableNames;
 }
 
+//Parse Customers API for Customer Data
+async function GetCustomerData()
+{
+  return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
+}
+
 
 
 app.get('/Store-Keys',async (req,res) => {
 
-  await createTokenTable();
   await PushTokenBQ(process.env.REFRESH_TOKEN);
 });
 
@@ -262,18 +268,30 @@ app.get('/ProfitLoss',async(req, res) => {
   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
   console.log("The refresh token is " + process.env.REFRESH_TOKEN );
 
-  let Data = await getProfitLossDetailData("Last Fiscal Year","sort_by=Date");
 
-  let Schema = await InferSchemaReport(Data);
+  let Customers = await GetCustomerData();
+  let CustomerNames = await GetCustomers(Customers);
 
-  InferData(Data,Schema);
+  
+  for(let i = 0; i < CustomerNames.length; i++)
+  {
+    let Data = await getProfitLossDetailData(`Last Fiscal Year&customer=${CustomerNames[i].CustomerID}`,"sort_by=Date");
 
-  //console.log(InvoiceSchema);
+    //&& Data.Rows.constructor === Object
+    if(Object.keys(Data.Rows).length !== 0 )
+    {
 
-  //console.log(InferSchema(Data));
+      let Schema = await InferSchemaReport(Data);
+      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_PNL_Sandbox");
 
-  //console.log("\n\nProfit and Loss Data:\n" + PrettyPrint(Data));
-  //res.send("\n\nProfit and Loss Data:\n" + PrettyPrint(Data));
+    }
+
+    
+  }
+  
+  
+  //InferData(Data,Schema);
+
   res.send("OK! Check Console");
 });
 
@@ -298,12 +316,44 @@ async function CheckAccessToken()
    {
     console.log('access token invalid, refreshing token..');
     await RefreshAccessToken(2);
+    //push new token
+    await PushTokenBQ(process.env.REFRESH_TOKEN); 
    }
+
+   
 
    return oauthClient.isAccessTokenValid();
 
 }
 
+
+//Gets Projects only on Customer API, should  return array of objects
+async function GetProjects(Data)
+{
+  
+}
+
+//Gets Customers that are not projects, should return an array of objects
+async function GetCustomers(Data)
+{
+  let Customer = [];
+
+  if(Data.QueryResponse != undefined)
+  {
+
+    if(Data.QueryResponse.Customer.length > 0)
+      {
+        for(let i = 0; i < Data.QueryResponse.Customer.length; i++)
+        {
+          Customer.push({CustomerID: Data.QueryResponse.Customer[i].Id, CustomerName: Data.QueryResponse.Customer[i].DisplayName});
+        }
+    
+      }
+
+  }
+  
+   return Customer
+}
 //Refreshes access token with current set OAUTH Token or supplied env
 async function RefreshAccessToken(opt)
 {
@@ -323,7 +373,10 @@ async function RefreshAccessToken(opt)
           console.log('\n\n ***Refresh Token has changed*** \n\n');
         }  
         //update Refresh Token Variable
-        PushTokenBQ(authResponse.json.refresh_token);
+        process.env.REFRESH_TOKEN = authResponse.json.refresh_token;
+
+        //push new token
+        //PushTokenBQ(process.env.REFRESH_TOKEN);
 
     })
     .catch(function (e) {
@@ -343,10 +396,13 @@ async function RefreshAccessToken(opt)
       console.log('\n\n ***Refresh Token has changed*** \n\n');
     }
     //update Refresh Token Variable
-    PushTokenBQ(authResponse.json.refresh_token);
+    process.env.REFRESH_TOKEN = authResponse.json.refresh_token;
 
-    //Decrement Option
-    FirstRunOption--;
+    //push new token
+    //PushTokenBQ(process.env.REFRESH_TOKEN); 
+    
+
+    
 
   })
   .catch(function (e) {
@@ -360,8 +416,7 @@ async function RefreshAccessToken(opt)
     break; 
 }
 
-   
-    
+ 
 }
 
 async function GetRefreshTokenBQ(TargetTable)
@@ -403,6 +458,7 @@ async function createTokenTable()
 
 async function PushTokenBQ(Newtoken)
 {
+  await createTableBQ(TokenDataSet,TokenDataSet,TokenSchema);
   await ManualTruncate(TokenDataSet,TokenDataSet);
   await PushDataBQManualSingle(TokenDataSet,TokenDataSet,TokenSchema,{Refresh_Token: Newtoken});
   process.env.REFRESH_TOKEN = Newtoken;
@@ -442,7 +498,7 @@ else
 
 }
 
-//Re-usable functions
+//Pretty-Prints raw JSON data
 function PrettyPrint(Data)
 {
   return JSON.stringify(Data, null, 2);
@@ -452,6 +508,12 @@ function PrettyPrint(Data)
 async function GetInvoiceData()
 {
    return await GetAPICall(url,companyID,"query?query=select * from Invoice&minorversion=73");   
+}
+
+//Customer Object call
+async function GetCustomerData()
+{
+  return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
 }
 
 //This may need to be refactored to inlcude date range
@@ -508,6 +570,7 @@ async function ManualTruncate(DataID,TabID)
 {
   // Truncate the table
   await BQ.query(`TRUNCATE TABLE \`${DataID}.${TabID}\``);
+  console.log("Table Truncated");
 }
 
 //Transform Data from API call into one that fits Schema(used for streaming data inserts)
@@ -569,13 +632,6 @@ async function PushDataBQ(DataID,TabID,RowData)
 
   }
     
-}
-
-async function ManualTruncate(DataID,TabID)
-{
-  // Truncate the table
-  await BQ.query(`TRUNCATE TABLE \`${DataID}.${TabID}\``);
-  console.log("Table Truncated");
 }
 
 //Alternative push data to BQ, creates a manual query string
@@ -658,49 +714,6 @@ async function PushDataBQManualSingle(datasetId, tableId, schema, row) {
   }
 }
 
-
-//Push Data, below is a batch loading implementation
-async function PushDataBQBatch(DataID,TabID,Data)
-{
-  
-  try {
-    const options = {
-      sourceFormat: 'NEWLINE_DELIMITED_JSON', // Specify data format
-      writeDisposition: 'WRITE_TRUNCATE',    // Overwrite the table
-      autodetect: true,                      // Let BigQuery detect the schema
-    };
-
-    // Create a Buffer from the newline-delimited JSON string
-    const dataString = Data.map(row => JSON.stringify(row)).join('\n');
-    const dataBuffer = Buffer.from(dataString, 'utf-8'); // Crucial change
-    //const dataBuffer = Readable.from(dataString);
-    // Create a readable stream from the string
-    const stream = new Readable({
-      read() {
-        this.push(dataString); 
-        this.push(null); // Signal end-of-stream
-      }
-    });
-   
-    const [job] = await BQ.dataset(DataID).table(TabID).load(stream, options); // Pass the Buffer
-
-    console.log(`Job ${job.id} completed.`);
-    console.log('Batch load successful.');
-  } catch (error) {
-    console.error('Error loading data into BigQuery:', error);
-
-    // Handle individual row errors, if any
-    if (error.errors) {
-      error.errors.forEach(err => {
-        console.error('Row-level error:', JSON.stringify(err));
-      });
-    }
-  }
-    
-
-  
-}
-
 //Creates BQ Table function (General)
 async function createTableBQ(DataID, TabID, schemaprofile) {
   const datasetId = DataID;
@@ -759,13 +772,7 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}/Initiate-OAuth`);
   console.log('To get Profit and Loss data without OAuth using refresh tokens click on link below');
   console.log(`http://localhost:${PORT}/ProfitLoss`);
-  console.log('To Create Table for token');
-  console.log(`http://localhost:${PORT}/CreateTokenStore`);
-  console.log('To Upload token stored on env file to BQ');
-  console.log(`http://localhost:${PORT}/PushTokenStore`);
-  console.log('Combined function from above (a little finicky)');
-  console.log(`http://localhost:${PORT}/Store-Keys`);
-  console.log('Used to Check Tokens and get New Tokens if needed');
+  console.log('To Push Tokens from NodeJS Application to BigQuery');
   console.log(`http://localhost:${PORT}/Store-Keys`);
 
 });
@@ -832,6 +839,6 @@ app.get('/Start',async(req, res) => {
   console.log("The Client Secret Is: " + process.env.CLIENT_SECRET);
   console.log("RealmID is: " + process.env.REALM_ID);
   console.log("Client Redirect is: " + process.env.CLIENT_REDIRECT);  
-  console.log("The refresh token is " + process.env.REFRESH_TOKEN );
+  console.log("The refresh token in .env file is " + process.env.REFRESH_TOKEN );
 
 })
