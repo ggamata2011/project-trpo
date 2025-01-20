@@ -23,7 +23,7 @@ const OAuthClient= require('intuit-oauth')
 const oauthClient = new OAuthClient({
   clientId: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  environment: 'sandbox',
+  environment: 'production',
   redirectUri: process.env.CLIENT_REDIRECT,
 
 });
@@ -60,6 +60,8 @@ const InvoiceSchema = [
   { name: 'LastUpdatedTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
 ];
 
+const ProjectedSchema = [];
+
 //Schema for Storing Refresh_Token
 const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
 
@@ -67,7 +69,7 @@ const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
 let OAUTH2_Token = null;
 
 //Misc Dataset names, interchangeble
-let TokenDataSet = 'IntuitKeysSandbox';
+let TokenDataSet = 'IntuitKeys';
 let ProfitLossDataSetName = 'ProfitLossSandBox';
 
 //Infer A Schema for a report
@@ -237,6 +239,12 @@ async function GetCustomerData()
   return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
 }
 
+//Used to check and store keys
+app.get('/Check-Keys',async (req,res) => {
+  CheckAccessToken();
+
+});
+
 app.get('/Store-Keys',async (req,res) => {
 
   await PushTokenBQ(process.env.REFRESH_TOKEN);
@@ -287,7 +295,7 @@ async function GetProfitLossWrapper()
     if(Object.keys(Data.Rows).length !== 0 )
     {
       let Schema = await InferSchemaReport(Data);
-      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_PNL_Sandbox");
+      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_" + CustomerNames[i].CustomerID + "_PNL");
 
     }  
   }
@@ -330,7 +338,7 @@ async function GetCustomers(Data)
       {
         for(let i = 0; i < Data.QueryResponse.Customer.length; i++)
         {
-          Customer.push({CustomerID: Data.QueryResponse.Customer[i].Id, CustomerName: Data.QueryResponse.Customer[i].DisplayName});
+          Customer.push({CustomerID: Data.QueryResponse.Customer[i].Id, CustomerName: Data.QueryResponse.Customer[i].FullyQualifiedName.replace(/:/g, " ")});
         }
     
       }
@@ -759,6 +767,8 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}/ProfitLoss`);
   console.log('To Push Tokens from NodeJS Application to BigQuery');
   console.log(`http://localhost:${PORT}/Store-Keys`);
+  console.log('Check Keys, Push New Key to BigQuery');
+  console.log(`http://localhost:${PORT}/Check-Keys`);
 
 });
 
