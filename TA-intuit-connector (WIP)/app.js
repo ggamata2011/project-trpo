@@ -67,7 +67,7 @@ let OAUTH2_Token = null;
 
 //Misc Dataset names, interchangeble
 let TokenDataSet = 'IntuitKeys';
-let ProfitLossDataSetName = 'ProfitLossSandBox';
+
 
 //Infer A Schema for a report
 async function InferSchemaReport(data)
@@ -130,8 +130,8 @@ function ResolveBQType(type)
   }
 }
 
-//Used to create Separate BQ Tables for Reports
-async function InferData(data,dataschema,DatasetName,Projected)
+//
+async function PushData(data,dataschema,DatasetName,Projected)
 {
   // Holds Table names
    let InferredTableNames = [];
@@ -140,6 +140,8 @@ async function InferData(data,dataschema,DatasetName,Projected)
    //Second Stack to keep of order
    let MemoryStack = [];
 
+
+   //Used for Inserting into Total Table, Contains Month/Expense/Revenue
    let Months = Projected.map(item => item.Projected_Month.value);
    let SumActualExpenses = Months.map(item => 0);
    let SumActualRevenue = Months.map(item => 0);
@@ -327,7 +329,7 @@ async function GetProfitLossWrapper()
     if(Object.keys(Data.Rows).length !== 0 )
     {
       let Schema = await InferSchemaReport(Data);
-      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_" + CustomerNames[i].CustomerID + "_PNL",ProjectedData);
+      await PushData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_" + CustomerNames[i].CustomerID + "_PNL",ProjectedData);
 
     }  
   }
