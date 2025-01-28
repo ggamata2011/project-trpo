@@ -3,10 +3,9 @@
 require('dotenv').config();
 const { Buffer } = require('buffer');
 const { Readable } = require('stream');
-const fs = require('fs'); // For Node.js
 
 //Big query API requires
-const {BigQuery} = require('@google-cloud/bigquery');
+const {BigQuery, Table} = require('@google-cloud/bigquery');
 //Instantiate App with express
 var express = require('express');
 var app = express();
@@ -60,8 +59,6 @@ const InvoiceSchema = [
   { name: 'LastUpdatedTime', type: 'TIMESTAMP', mode: 'NULLABLE' },
 ];
 
-const ProjectedSchema = [];
-
 //Schema for Storing Refresh_Token
 const TokenSchema = [{name:'Refresh_Token', type:'STRING', mode:'NULLABLE'}];
 
@@ -76,12 +73,18 @@ let ProfitLossDataSetName = 'ProfitLossSandBox';
 async function InferSchemaReport(data)
 {
   let InferredSchema = [];
-
   //Get Column Names and Data Types
   for(let i = 0; i < data.Columns.Column.length; i++)
   {
-    InferredSchema.push({ name: removeSpecialCharacters(data.Columns.Column[i].ColTitle), type: ResolveBQType(data.Columns.Column[i].ColType), mode: 'NULLABLE' });
+    InferredSchema.push({ name: removeSpecialCharacters(data.Columns.Column[i].ColTitle), type: ResolveBQType(data.Columns.Column[i].ColType), mode: 'NULLABLE'});
   }
+  //Push Extra Columns to Organize data
+  InferredSchema.push({ name: 'Classification', type: 'STRING', mode: 'NULLABLE' });
+  InferredSchema.push({ name: 'Actual', type: 'FLOAT', mode: 'NULLABLE' });
+  InferredSchema.push({ name: 'Projected', type: 'FLOAT', mode: 'NULLABLE' });
+  InferredSchema.push({ name: 'Table', type: 'STRING', mode: 'NULLABLE' });
+  InferredSchema.push({ name: 'Description', type: 'STRING', mode: 'NULLABLE' });
+  InferredSchema.push({name:'Reporting Category', type:'STRING', mode:'NULLABLE'});
 
   return InferredSchema;
 }
@@ -93,9 +96,7 @@ function removeSpecialCharacters(input) {
   {
     return input.replace(/[^a-zA-Z0-9 ]/g, '');
   }
-
   return '';
-  
 }
 
 //Used for abiding to BQ Naming Standards
@@ -130,7 +131,7 @@ function ResolveBQType(type)
 }
 
 //Used to create Separate BQ Tables for Reports
-async function InferData(data,dataschema,DatasetName)
+async function InferData(data,dataschema,DatasetName,Projected)
 {
   // Holds Table names
    let InferredTableNames = [];
@@ -139,7 +140,12 @@ async function InferData(data,dataschema,DatasetName)
    //Second Stack to keep of order
    let MemoryStack = [];
 
-   let DataSetName;
+   let Months = Projected.map(item => item.Projected_Month.value);
+   let SumActualExpenses = Months.map(item => 0);
+   let SumActualRevenue = Months.map(item => 0);
+
+   //Used for Inserting into the Total Table in Big Query
+   let TotalTable = [];
 
    //Get Top Level Column Names and Data Types
   for(let i = 0; i < data.Rows.Row.length; i++)
@@ -172,26 +178,21 @@ async function InferData(data,dataschema,DatasetName)
               
           }   
          }  
-
          //Check if Current Level is at bottom
          if (CurrentLevel.Rows.Row[0].ColData != undefined && CurrentLevel.Rows.Row[0].type == 'Data')
           {
             //console.log("Table Name Data:" + CurrentLevel.Header.ColData[0].value);
             InferredTableNames.includes(CurrentLevel.Header.ColData[0].value) ? null:InferredTableNames.push(removeSpecialCharacters(CurrentLevel.Header.ColData[0].value));
-            
             //Create Table
             let FullTable = [];
-
             //Loop through Each data fields to transform to appropriate schema
             for(let j = 0;j < CurrentLevel.Rows.Row.length; j++)
             {
               let TableRow = {};
-              
               //loop through each subportion
               for(let k = 0; k < CurrentLevel.Rows.Row[j].ColData.length; k++)
               {
                 //console.log('value item: ' + CurrentLevel.Rows.Row[j].ColData[k].value);
-
                 //Some tables have an "amount" object with no value, must check for that
                 if(dataschema[k].name == 'Amount' && CurrentLevel.Rows.Row[j].ColData[k].value == undefined || CurrentLevel.Rows.Row[j].ColData[k].value == "")
                 {
@@ -200,9 +201,19 @@ async function InferData(data,dataschema,DatasetName)
                 else
                 {
                   TableRow[dataschema[k].name] = CurrentLevel.Rows.Row[j].ColData[k].value;
-                }
-                
+                }            
               }
+
+              //Push Additional Rows for Extra Columns
+              TableRow['Classification'] = removeSpecialCharacters(CurrentLevel.Header.ColData[0].value) == 'Sales' ? 'Income' : 'Expense';
+              TableRow['Actual'] = TableRow['Amount'];
+              TableRow['Projected'] = null;
+              TableRow['Table'] = removeSpecialCharacters(CurrentLevel.Header.ColData[0].value);
+              TableRow['Description'] = TableRow['MemoDescription'] == null ? TableRow['Transaction Type'] : TableRow['MemoDescription'];
+              TableRow['Reporting Category'] = 'Actual';
+              //Add Sums
+              SumActualExpenses[GetIntegerMonth(TableRow['Date'])-1] += (TableRow['Classification'] == 'Expense' && TableRow['Actual'] != null && TableRow['Amount'] != '' ) ? parseFloat(TableRow['Actual'], 10) : 0;
+              SumActualRevenue[GetIntegerMonth(TableRow['Date'])-1] += (TableRow['Classification'] == 'Income' && TableRow['Actual'] != null && TableRow['Amount'] != '') ? parseFloat(TableRow['Actual'], 10) : 0;
 
               FullTable.push(TableRow);
             }
@@ -211,10 +222,10 @@ async function InferData(data,dataschema,DatasetName)
             await createTableBQ(DatasetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema);
             await ManualTruncate(DatasetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value));
             await PushDataBQManual(DatasetName, removeSpecialCharacters(CurrentLevel.Header.ColData[0].value), dataschema, FullTable);
+
+
             //await PushDataBQ(ProfitLossDataSetName,removeSpecialCharacters(CurrentLevel.Header.ColData[0].value),FullTable);
           }
-
-
          //If Exhausted all children, push back onto MainStack
          if(TreeStack.length == 0 && MemoryStack.length != 0)
          {
@@ -227,10 +238,40 @@ async function InferData(data,dataschema,DatasetName)
     }      
   }
 
-  //Display Inferred TableNames
-  console.log(InferredTableNames);
+  //Construct Total Table for Inserting into
+  for(let i = 0; i < Months.length; i++)
+  {
+    //Push Actual Expenses
+    TotalTable.push({'Date': Months[i], 'Actual': SumActualExpenses[i], 'Projected': null, 'Table': DatasetName + '_Totals','Reporting Category': 'Actual','Classification': 'Total Expense', 'Description': 'Total Expenses'}); 
+    TotalTable.push({'Date': Months[i], 'Actual': null, 'Projected': Projected[i].Projected_Expense, 'Table': DatasetName + '_Totals','Reporting Category': 'Projected','Classification':'Total Expense', 'Description': 'Total Expenses'});
+
+    //Push Actual Revenue
+    TotalTable.push({'Date': Months[i], 'Actual': SumActualRevenue[i], 'Projected': null, 'Table': DatasetName + '_Totals','Reporting Category': 'Actual','Classification': 'Total Revenue', 'Description': 'Total Revenue'}); 
+    TotalTable.push({'Date': Months[i], 'Actual': null, 'Projected': Projected[i].Projected_Revenue, 'Table': DatasetName + '_Totals','Reporting Category': 'Projected','Classification':'Total Revenue', 'Description': 'Total Revenue'});
+
+    //Push Net Income
+    TotalTable.push({'Date': Months[i], 'Actual': SumActualRevenue[i] -SumActualExpenses[i], 'Projected': null, 'Table': DatasetName + '_Totals','Reporting Category': 'Actual','Classification': 'Net', 'Description': 'Net'}); 
+    TotalTable.push({'Date': Months[i], 'Actual': null, 'Projected': Projected[i].Projected_Revenue - Projected[i].Projected_Expense, 'Table': DatasetName + '_Totals','Reporting Category': 'Projected','Classification':'Net', 'Description': 'Net'});
+
+    //Push Percent
+    TotalTable.push({'Date': Months[i], 'Actual': SumActualRevenue[i] == 0 ? 0 : (SumActualRevenue[i] -SumActualExpenses[i]) / SumActualRevenue[i], 'Projected': null, 'Table': DatasetName + '_Totals','Reporting Category': 'Actual','Classification': 'Percent Revenue', 'Description': 'Percent Revenue'}); 
+    TotalTable.push({'Date': Months[i], 'Actual': null, 'Projected': (Projected[i].Projected_Revenue - Projected[i].Projected_Expense) / Projected[i].Projected_Revenue, 'Table': DatasetName + '_Totals','Reporting Category': 'Projected','Classification':'Percent Revenue', 'Description': 'Percent Revenue'});
+  }
+
+  //Create Tables for Projected and Actual Totals
+  await createTableBQ(DatasetName + '_Totals', DatasetName + '_Totals', dataschema);
+  await ManualTruncate(DatasetName + '_Totals', DatasetName + '_Totals');
+  //Push Total Data onto DataSet
+  await PushDataBQManual(DatasetName + '_Totals', DatasetName + '_Totals', dataschema, TotalTable);
   
-  return InferredTableNames;
+
+}
+
+function GetIntegerMonth(date)
+{
+  // Extract the month
+const month = parseInt(date.split("-")[1], 10);
+return month;
 }
 
 //Parse Customers API for Customer Data
@@ -252,14 +293,10 @@ app.get('/Store-Keys',async (req,res) => {
 
 //Webhook API Endpoint
 app.post('/TA-Intuit',async(req,res) => {
-
  console.log('Received Request:' + JSON.stringify(req.body));
- 
  await GetProfitLossWrapper(); 
-
  // Send a response
  res.status(200).send('Webhook received successfully');
-   
 });
 
 //Endpoint for Reporting Profit and Loss
@@ -275,18 +312,13 @@ app.get('/ProfitLoss',async(req, res) => {
   res.send("OK! Check Console");
 });
 
-//Refresh Timer used for testing refresh tokens only
-app.get('/StartRefreshTimers',(req,res) =>{
-  CheckAccessToken();
-
-setInterval(CheckAccessToken, 65 * 60 * 1000);
-console.log('Refresh Access Token Timer Started')
-});
-
 async function GetProfitLossWrapper()
 {
   let Customers = await GetCustomerData();
   let CustomerNames = await GetCustomers(Customers);
+
+  //Get Projected Data
+  let ProjectedData = await GetBigQueryData("Bamrec_Projected_2024","Preschool");
 
   for(let i = 0; i < CustomerNames.length; i++)
   {
@@ -295,7 +327,7 @@ async function GetProfitLossWrapper()
     if(Object.keys(Data.Rows).length !== 0 )
     {
       let Schema = await InferSchemaReport(Data);
-      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_" + CustomerNames[i].CustomerID + "_PNL");
+      await InferData(Data,Schema,replaceWhitespaceWithUnderscores(removeSpecialCharacters(CustomerNames[i].CustomerName)) + "_" + CustomerNames[i].CustomerID + "_PNL",ProjectedData);
 
     }  
   }
@@ -330,29 +362,24 @@ async function CheckAccessToken()
 async function GetCustomers(Data)
 {
   let Customer = [];
-
   if(Data.QueryResponse != undefined)
   {
-
     if(Data.QueryResponse.Customer.length > 0)
       {
         for(let i = 0; i < Data.QueryResponse.Customer.length; i++)
         {
           Customer.push({CustomerID: Data.QueryResponse.Customer[i].Id, CustomerName: Data.QueryResponse.Customer[i].FullyQualifiedName.replace(/:/g, " ")});
         }
-    
       }
-
   }
-  
    return Customer
 }
+
 //Refreshes access token with current set OAUTH Token or supplied env
 async function RefreshAccessToken(opt)
 {
   
   switch(opt){
-
     //Case 1 used for refresh, if OAuth used
     case 1:
       await oauthClient
@@ -456,7 +483,27 @@ async function PushTokenBQ(Newtoken)
   await PushDataBQManualSingle(TokenDataSet,TokenDataSet,TokenSchema,{Refresh_Token: Newtoken});
   process.env.REFRESH_TOKEN = Newtoken;
 }
-  
+
+//Gets Projected Data to create new Tables
+async function GetBigQueryData(DatasetID, TableID)
+{
+    // Construct the query
+  const query = `
+  SELECT *
+  FROM \`${DatasetID}.${TableID}\`
+`;
+
+try {
+  // Execute the query
+  const [rows] = await BQ.query({ query });
+  return rows;
+} catch (err) {
+  console.error('ERROR:', err);
+}
+
+
+}
+
 //Generic API Call Template
 async function GetAPICall(baseURL,CompID,query)
 {
@@ -491,29 +538,10 @@ else
 
 }
 
-//Pretty-Prints raw JSON data
-function PrettyPrint(Data)
-{
-  return JSON.stringify(Data, null, 2);
-}
-
-//Invoice Object, made these to simplify calls
-async function GetInvoiceData()
-{
-   return await GetAPICall(url,companyID,"query?query=select * from Invoice&minorversion=73");   
-}
-
 //Customer Object call
 async function GetCustomerData()
 {
   return await GetAPICall(url,companyID,"query?query=select * from Customer&minorversion=73");
-}
-
-//This may need to be refactored to inlcude date range
-// please do not use this in the meanwhile
-async function GetProfitLossData()
-{
-  return await GetAPICall(url,companyID,"query?query=select * from ProfitLoss&minorversion=73");
 }
 
 async function getProfitLossDetailData(date_macro,options)
@@ -542,21 +570,6 @@ async function getProfitLossDetailData(date_macro,options)
   
 } 
 
-async function PushInvoiceData(InvoiceData)
-{
-  if(InvoiceData)
-  {
-    let TransformedData = TransformJSONInvoice(InvoiceData);
-    await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
-    await PushDataBQ("Invoice","Invoice_Detail",TransformedData);
-  }
-  else
-  {
-    console.log("Data not recieved, Data will not be pushed");
-  }
-  
-}
-
 //Code to manually truncate table
 //DO NOT USE WITH STREAMING INSERTS
 async function ManualTruncate(DataID,TabID)
@@ -566,43 +579,10 @@ async function ManualTruncate(DataID,TabID)
   console.log("Table Truncated");
 }
 
-//Transform Data from API call into one that fits Schema(used for streaming data inserts)
-async function TransformJSONInvoice(Data)
-{
-  // Assume `apiResponse.QueryResponse.Invoice` contains an array of invoices
-  if(Data)
-  {
-    const invoices = Data.QueryResponse.Invoice || [];
-
-  return invoices.map(invoice => {
-    return {
-      TxnDate: invoice.TxnDate || null,
-      TotalAmt: invoice.TotalAmt || null,
-      DocNumber: invoice.DocNumber || null,
-      CustomerName: invoice.CustomerRef?.name || null,
-      CustomerValue: invoice.CustomerRef?.value || null,
-      Lines: invoice.Line ? JSON.stringify(invoice.Line) : null,
-      DueDate: invoice.DueDate || null,
-      Email: invoice.BillEmail?.Address || null,
-      ShipAddr: invoice.ShipAddr ? JSON.stringify(invoice.ShipAddr) : null,
-      BillAddr: invoice.BillAddr ? JSON.stringify(invoice.BillAddr) : null,
-      CreateTime: invoice.MetaData?.CreateTime || null,
-      LastUpdatedTime: invoice.MetaData?.LastUpdatedTime || null,
-    };
-  });
-
-  }
-  else{
-    console.log("No data in response");
-  }
-  
-}
-
 //Google Big Query Functions Below
 //Push Data onto Google Big Query, below is a streaming insert implementation
 async function PushDataBQ(DataID,TabID,RowData)
 {
- 
   try{
     const options = {
       autodetect: true,
@@ -611,7 +591,6 @@ async function PushDataBQ(DataID,TabID,RowData)
 
      // Load data directly from memory
      const [job] = await BQ.dataset(DataID).table(TabID).insert(RowData,options);
-
      console.log(`Data loaded into BigQuery. Job: ${job.id}`);
 
   } catch  (error)
@@ -622,9 +601,7 @@ async function PushDataBQ(DataID,TabID,RowData)
         console.error('Row-level error:', JSON.stringify(err));
       });
     }
-
-  }
-    
+  } 
 }
 
 //Alternative push data to BQ, creates a manual query string
@@ -645,7 +622,7 @@ async function PushDataBQManual(datasetId, tableId, schema, rows) {
           return `'${removeSpecialCharacters(value)}'`;
         }  else if (field.type === 'DATE') {
           return `'${value}'`; // Dates should be passed as strings
-        } else if (field.type === 'NUMERIC' || field.type === 'FLOAT' || field.type === 'INTEGER') {
+        } else if ((field.type === 'NUMERIC' || field.type === 'FLOAT' || field.type === 'INTEGER') && value != null) {
           return value; // Pass numeric values as-is
         } else if (value === null || value === undefined) {
           return 'NULL';
@@ -663,9 +640,9 @@ async function PushDataBQManual(datasetId, tableId, schema, rows) {
     const insertQuery = `INSERT INTO \`${datasetId}.${tableId}\` (${columns}) VALUES ${valuesString}`;
 
     // Step 2: Execute the query
-    console.log(`Executing query: ${insertQuery}`);
+    //console.log(`Executing query: ${insertQuery}`);
     await BQ.query(insertQuery);
-    console.log('Rows inserted successfully.');
+    //console.log('Rows inserted successfully.');
   } catch (error) {
     console.error('Error during insertion:', error);
   }
@@ -724,7 +701,6 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
       await BQ.createDataset(datasetId, { location: 'US' });
       console.log(`Dataset ${datasetId} created.`);
     } else {
-
       console.log(`Dataset ${datasetId} already exists.`);
     }
 
@@ -740,16 +716,12 @@ async function createTableBQ(DataID, TabID, schemaprofile) {
       location: 'US',
     };
 
-  
     if (!tableExists) {
       // Create the table if it doesn't exist
-      
       const [table] = await dataset.createTable(tableId, options);
       console.log(`Table ${table.id} created.`);
     } else {
- 
       console.log(`Table ${tableId} already exists.`);
-
     }
   } catch (err) {
     console.error('Error creating or checking table:', err);
@@ -769,7 +741,6 @@ app.listen(PORT, function () {
   console.log(`http://localhost:${PORT}/Store-Keys`);
   console.log('Check Keys, Push New Key to BigQuery');
   console.log(`http://localhost:${PORT}/Check-Keys`);
-
 });
 
 /* 
@@ -807,20 +778,7 @@ await oauthClient
  console.error(e);
 });
 
-//Create Tables
-await createTableBQ("Invoice","Invoice_Detail",InvoiceSchema);
- 
-//Get Invoice (Temporarily commented out)
-let InvoiceData = await GetInvoiceData();
-await PushInvoiceData(InvoiceData);
-
-// Schedule the token refresh to happen every 60 minutes (3600 seconds)
-// Old CODE 60 * 60 * 1000
-setInterval(RefreshAccessToken, 55 * 60 * 1000);
-console.log('Refresh Access Token Timer Started')
-
-//Set Interval for Getting Invoice Data
-setInterval(GetInvoiceData,60 * 60 * 1000);
+res.send("Keys Updated through OAUTH")
 }
 /* 
 ******************************************************************
